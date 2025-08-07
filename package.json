@@ -1,0 +1,14 @@
+{
+  "name": "mtg-price-api",
+  "version": "1.0.0",
+  "description": "Simple API to fetch MTG card prices from Scryfall",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "express": "^4.19.2"
+  }
+}
