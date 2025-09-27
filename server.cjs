@@ -2,8 +2,11 @@ import express from "express";
 import axios from "axios";
 import cheerio from "cheerio";
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+const express = require("express");
+const cheerio = require("cheerio");
+const axios = require("axios");
+// Puppeteer if you still want it:
+const puppeteer = require("puppeteer");
 
 // Helper function to normalize prices to numbers
 function parsePrice(priceStr) {
