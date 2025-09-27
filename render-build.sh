@@ -9,16 +9,18 @@ npm install
 
 echo "Setting up Puppeteer cache..."
 PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer
-mkdir -p $PUPPETEER_CACHE_DIR
+mkdir -p "$PUPPETEER_CACHE_DIR/chrome"
 
 echo "Installing Puppeteer Chrome..."
 npx puppeteer browsers install chrome
 
 # Store Puppeteer cache in build cache
-if [[ ! -d $PUPPETEER_CACHE_DIR ]]; then
+if [[ ! -d "$PUPPETEER_CACHE_DIR/chrome" ]]; then
   echo "...Copying Puppeteer Cache from Build Cache"
-  cp -R /opt/render/project/src/.cache/puppeteer/chrome/ $PUPPETEER_CACHE_DIR
+  mkdir -p "$PUPPETEER_CACHE_DIR/chrome"
+  cp -R /opt/render/project/src/.cache/puppeteer/chrome/* "$PUPPETEER_CACHE_DIR/chrome/"
 else
   echo "...Storing Puppeteer Cache in Build Cache"
-  cp -R $PUPPETEER_CACHE_DIR /opt/render/project/src/.cache/puppeteer/chrome/
+  mkdir -p "$PUPPETEER_CACHE_DIR/chrome"
+  cp -R "$PUPPETEER_CACHE_DIR/chrome" /opt/render/project/src/.cache/puppeteer/chrome/
 fi
