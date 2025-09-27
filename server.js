@@ -6,6 +6,8 @@ const app = express();
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     let browser;
     try {
+        console.log(`Searching for card: ${searchTerm}`);
+        
         // Find Chrome executable using shell command
         let executablePath;
         try {
@@ -13,8 +15,9 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
                 'find /opt/render/.cache/puppeteer -name chrome -type f 2>/dev/null | head -1', 
                 {encoding: 'utf8'}
             ).trim();
+            console.log(`Found Chrome at: ${executablePath}`);
         } catch (e) {
-            // Fallback to letting Puppeteer find Chrome
+            console.log('Chrome not found in cache, using Puppeteer default');
             executablePath = undefined;
         }
 
@@ -26,7 +29,8 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
                 "--disable-dev-shm-usage",
                 "--disable-accelerated-2d-canvas",
                 "--no-first-run",
-                "--disable-gpu"
+                "--disable-gpu",
+                "--disable-extensions"
             ]
         };
 
@@ -34,7 +38,9 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             launchOptions.executablePath = executablePath;
         }
 
+        console.log('Launching browser...');
         browser = await puppeteer.launch(launchOptions);
+        console.log('Browser launched successfully');
 
         const page = await browser.newPage();
         await page.setUserAgent(
@@ -185,7 +191,14 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
         return message;
 
     } catch (err) {
-        if (browser) await browser.close();
+        console.error(`Error fetching card "${searchTerm}":`, err.message);
+        if (browser) {
+            try {
+                await browser.close();
+            } catch (closeErr) {
+                console.error('Error closing browser:', closeErr.message);
+            }
+        }
         let message = `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
         if (message.length > 390) message = message.slice(0, 387) + "...";
         return message;
@@ -196,17 +209,61 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
 app.get("/price", async (req, res) => {
     const card = req.query.card || "";
     const user = req.query.user || "Streamer";
-    if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
-    const msg = await fetchCardPrice(card, user);
-    res.type("text/plain").send(msg);
+    
+    if (!card.trim()) {
+        return res.type("text/plain").send(`${user}, please provide a card name!`);
+    }
+    
+    // Set a timeout to prevent hanging
+    const timeout = setTimeout(() => {
+        if (!res.headersSent) {
+            res.type("text/plain").send(`${user}, request timed out for "${card}"`);
+        }
+    }, 25000); // 25 second timeout
+    
+    try {
+        const msg = await fetchCardPrice(card, user);
+        clearTimeout(timeout);
+        if (!res.headersSent) {
+            res.type("text/plain").send(msg);
+        }
+    } catch (error) {
+        clearTimeout(timeout);
+        console.error('Route error:', error);
+        if (!res.headersSent) {
+            res.type("text/plain").send(`${user}, server error for "${card}"`);
+        }
+    }
 });
 
 app.get("/price/:card", async (req, res) => {
     const card = req.params.card || "";
     const user = req.query.user || "Streamer";
-    if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
-    const msg = await fetchCardPrice(card, user);
-    res.type("text/plain").send(msg);
+    
+    if (!card.trim()) {
+        return res.type("text/plain").send(`${user}, please provide a card name!`);
+    }
+    
+    // Set a timeout to prevent hanging
+    const timeout = setTimeout(() => {
+        if (!res.headersSent) {
+            res.type("text/plain").send(`${user}, request timed out for "${card}"`);
+        }
+    }, 25000); // 25 second timeout
+    
+    try {
+        const msg = await fetchCardPrice(card, user);
+        clearTimeout(timeout);
+        if (!res.headersSent) {
+            res.type("text/plain").send(msg);
+        }
+    } catch (error) {
+        clearTimeout(timeout);
+        console.error('Route error:', error);
+        if (!res.headersSent) {
+            res.type("text/plain").send(`${user}, server error for "${card}"`);
+        }
+    }
 });
 
 const PORT = process.env.PORT || 3000;
