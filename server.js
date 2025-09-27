@@ -139,7 +139,9 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
         if (matchingCards.length === 0) {
             const fallback = products[0];
             await browser.close();
-            return `${chatUser}, no exact match for "${searchTerm}". Found: ${fallback.title} (${fallback.setName}) | Price: ${fallback.market}`;
+            let message = `${chatUser}, no exact match for "${searchTerm}". Found: ${fallback.title} (${fallback.setName}) | Price: ${fallback.market}`;
+            if (message.length > 390) message = message.slice(0, 387) + "...";
+            return message;
         }
 
         const nonFoilCards = matchingCards.filter((card) => !card.isFoil);
@@ -193,15 +195,33 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             message += `Card: ${bestFoil.cleanTitle} (${bestFoil.setName}) | Regular: Not found | Foil: ${bestFoil.market}`;
         }
 
+        // Nightbot-safe trim (under 400 chars)
+        if (message.length > 390) message = message.slice(0, 387) + "...";
         return message;
     } catch (err) {
         if (browser) await browser.close();
-        return `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
+        let message = `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
+        if (message.length > 390) message = message.slice(0, 387) + "...";
+        return message;
     }
 }
 
+// --- Support both query and path style ---
 app.get("/price", async (req, res) => {
     const card = req.query.card || "";
+    const user = req.query.user || "Streamer";
+
+    if (!card.trim()) {
+        res.type("text/plain").send(`${user}, please provide a card name!`);
+        return;
+    }
+
+    const msg = await fetchCardPrice(card, user);
+    res.type("text/plain").send(msg);
+});
+
+app.get("/price/:card", async (req, res) => {
+    const card = req.params.card || "";
     const user = req.query.user || "Streamer";
 
     if (!card.trim()) {
