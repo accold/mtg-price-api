@@ -3,7 +3,7 @@ const puppeteer = require("puppeteer");
 
 const app = express();
 
-// Auto-scroll for lazy-loaded products
+// Auto-scroll to load lazy content
 async function autoScroll(page) {
     await page.evaluate(async () => {
         await new Promise(resolve => {
@@ -22,7 +22,7 @@ async function autoScroll(page) {
     });
 }
 
-// Fuzzy match function
+// Simple fuzzy match
 const fuzzyMatch = (searchTerm, cardTitle) => {
     const searchWords = searchTerm.toLowerCase().split(/\s+/);
     const titleWords = cardTitle.toLowerCase().split(/\s+/);
@@ -39,7 +39,7 @@ const fuzzyMatch = (searchTerm, cardTitle) => {
     return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
 };
 
-// Select best card by price, prioritizing main sets
+// Pick best card by price, prioritizing main sets
 const prioritizeMainSet = (cards) => {
     if (cards.length === 0) return null;
 
@@ -59,7 +59,6 @@ const prioritizeMainSet = (cards) => {
     return sortedAll[0] || cards[0];
 };
 
-// Main endpoint
 app.get("/price", async (req, res) => {
     const searchTerm = req.query.card;
     if (!searchTerm) return res.send("Please provide a card name: ?card=NAME");
@@ -76,15 +75,15 @@ app.get("/price", async (req, res) => {
                 '--no-first-run',
                 '--disable-gpu'
             ]
-            // No executablePath needed! Puppeteer handles it internally
+            // NO executablePath needed! Puppeteer finds Chromium automatically
         });
 
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
         const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
-        await page.goto(searchUrl, { waitUntil: "networkidle0", timeout: 30000 });
-        await page.waitForTimeout(3000);
+        await page.goto(searchUrl, { waitUntil: "networkidle0", timeout: 0 });
+        await page.waitForTimeout(2000);
         await autoScroll(page);
 
         const selectors = ['.product-card__product', '.search-result', '.product-item', '[data-testid="product-card"]', '.product'];
@@ -162,7 +161,8 @@ app.get("/price", async (req, res) => {
 
     } catch (err) {
         if (browser) await browser.close();
-        return res.send(`Error fetching "${searchTerm}": ${err.message}`);
+        console.error("Puppeteer error:", err);
+        return res.status(500).send(`Error fetching "${searchTerm}": ${err.message}`);
     }
 });
 
