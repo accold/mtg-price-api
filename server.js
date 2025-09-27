@@ -1,149 +1,104 @@
-const express = require("express");
-const puppeteer = require("puppeteer");
+import express from "express";
+import axios from "axios";
+import cheerio from "cheerio";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Basic test route
-app.get("/", (req, res) => {
-    res.send("TCG Card Price Bot is running!");
-});
+// Helper function to normalize prices to numbers
+function parsePrice(priceStr) {
+    if (!priceStr || priceStr === "N/A") return null;
+    return parseFloat(priceStr.replace(/[^0-9.]/g, ""));
+}
 
-// Test Puppeteer route
-app.get("/test", async (req, res) => {
-    try {
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--no-first-run",
-                "--disable-gpu"
-            ]
-        });
-        
-        const page = await browser.newPage();
-        await page.goto("https://example.com");
-        const title = await page.title();
-        await browser.close();
-        
-        res.json({ success: true, title: title });
-    } catch (error) {
-        res.json({ success: false, error: error.message });
-    }
-});
-
+// Fetch card prices
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
-    let browser;
     try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-accelerated-2d-canvas",
-                "--no-first-run",
-                "--disable-gpu"
-            ]
-        });
-
-        const page = await browser.newPage();
-        await page.setUserAgent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        );
-
         const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
             searchTerm
         )}&view=grid`;
-        await page.goto(searchUrl, { waitUntil: "networkidle0", timeout: 30000 });
-        await new Promise(resolve => setTimeout(resolve, 3000));
 
+        const { data: html } = await axios.get(searchUrl, {
+            headers: {
+                "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            },
+        });
+
+        const $ = cheerio.load(html);
         let products = [];
+
+        // Attempt multiple selectors as before
         const selectors = [
             ".product-card__product",
             ".search-result",
             ".product-item",
-            "[data-testid=\"product-card\"]",
-            ".product"
+            "[data-testid='product-card']",
+            ".product",
         ];
 
-        for (const selector of selectors) {
-            try {
-                await page.waitForSelector(selector, { timeout: 5000 });
-                products = await page.$$eval(selector, (cards) => {
-                    return cards.map(card => {
-                        const titleEl =
-                            card.querySelector(".product-card__title") ||
-                            card.querySelector(".product-title") ||
-                            card.querySelector("h3") ||
-                            card.querySelector("h4") ||
-                            card.querySelector("[data-testid=\"product-title\"]");
+        for (const sel of selectors) {
+            $(sel).each((i, el) => {
+                const titleEl =
+                    $(el).find(".product-card__title").first() ||
+                    $(el).find(".product-title").first() ||
+                    $(el).find("h3").first() ||
+                    $(el).find("h4").first();
 
-                        const priceEl =
-                            card.querySelector(".product-card__market-price--value") ||
-                            card.querySelector(".market-price") ||
-                            card.querySelector(".price") ||
-                            card.querySelector("[data-testid=\"market-price\"]");
+                const priceEl =
+                    $(el).find(".product-card__market-price--value").first() ||
+                    $(el).find(".market-price").first() ||
+                    $(el).find(".price").first();
 
-                        const setEl =
-                            card.querySelector(".product-card__set-name__variant") ||
-                            card.querySelector(".set-name") ||
-                            card.querySelector(".product-set");
+                const setEl =
+                    $(el).find(".product-card__set-name__variant").first() ||
+                    $(el).find(".set-name").first() ||
+                    $(el).find(".product-set").first();
 
-                        const title = titleEl?.textContent?.trim() || "";
-                        const market = priceEl?.textContent?.trim() || "N/A";
-                        const setName = setEl?.textContent?.trim() || "";
+                const title = titleEl.text().trim();
+                const market = priceEl.text().trim() || "N/A";
+                const setName = setEl.text().trim();
 
-                        if (!title) return null;
+                if (!title) return;
 
-                        const isFoil = title.toLowerCase().includes("foil");
-                        const isSpecial = /(serialized|prestige|hyperspace|showcase|alternate art|extended art|organized play|promo|\(prestige\)|\(showcase\)|\(hyperspace\)|\(serialized\))/i.test(
-                            title + " " + setName
-                        );
+                const isFoil = title.toLowerCase().includes("foil");
+                const isSpecial = /(serialized|prestige|hyperspace|showcase|alternate art|extended art|organized play|promo|\(prestige\)|\(showcase\)|\(hyperspace\)|\(serialized\))/i.test(
+                    title + " " + setName
+                );
 
-                        return {
-                            title,
-                            market,
-                            setName,
-                            isFoil,
-                            isSpecial,
-                            cleanTitle: title
-                                .toLowerCase()
-                                .replace(/\(foil\)/gi, "")
-                                .replace(/foil/gi, "")
-                                .trim()
-                        };
-                    }).filter(Boolean);
-                }, selector);
-
-                if (products.length > 0) break;
-            } catch {
-                continue;
-            }
+                products.push({
+                    title,
+                    market,
+                    setName,
+                    isFoil,
+                    isSpecial,
+                    cleanTitle: title.toLowerCase().replace(/\(foil\)/gi, "").replace(/foil/gi, "").trim(),
+                });
+            });
+            if (products.length > 0) break;
         }
 
-        if (products.length === 0) throw new Error("No product cards found");
+        if (products.length === 0)
+            return `${chatUser}, no product cards found for "${searchTerm}"`;
 
         const normalizedSearch = searchTerm.toLowerCase().replace(/\W/g, "");
+
         const fuzzyMatch = (searchTerm, cardTitle) => {
             const searchWords = searchTerm.toLowerCase().split(/\s+/);
             const titleWords = cardTitle.toLowerCase().split(/\s+/);
-            const matchedWords = searchWords.filter(searchWord => {
-                return titleWords.some(titleWord => {
-                    return (
+            const matchedWords = searchWords.filter((searchWord) =>
+                titleWords.some(
+                    (titleWord) =>
                         titleWord.includes(searchWord) ||
                         searchWord.includes(titleWord) ||
                         (Math.abs(titleWord.length - searchWord.length) <= 1 &&
                             titleWord.slice(0, -1) === searchWord.slice(0, -1))
-                    );
-                });
-            });
+                )
+            );
             return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
         };
 
-        const matchingCards = products.filter(card => {
+        const matchingCards = products.filter((card) => {
             const normalizedTitle = card.cleanTitle.replace(/\W/g, "");
             const normalizedFullTitle = card.title.toLowerCase().replace(/\W/g, "");
             return (
@@ -154,36 +109,23 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             );
         });
 
+        const fallbackCard = products[0];
         if (matchingCards.length === 0) {
-            const fallback = products[0];
-            await browser.close();
-            let message = `${chatUser}, no exact match for "${searchTerm}". Found: ${fallback.title} (${fallback.setName}) | Price: ${fallback.market}`;
-            if (message.length > 390) message = message.slice(0, 387) + "...";
-            return message;
+            return `${chatUser}, no exact match for "${searchTerm}". Found: ${fallbackCard.title} (${fallbackCard.setName}) | Price: ${fallbackCard.market}`;
         }
 
-        const nonFoilCards = matchingCards.filter(card => !card.isFoil);
-        const foilCards = matchingCards.filter(card => card.isFoil);
+        const nonFoilCards = matchingCards.filter((c) => !c.isFoil);
+        const foilCards = matchingCards.filter((c) => c.isFoil);
 
         const prioritizeMainSet = (cards) => {
             if (cards.length === 0) return null;
-            const mainSetCards = cards.filter(card => !card.isSpecial);
-            if (mainSetCards.length > 0) {
-                const sortedMain = mainSetCards
-                    .filter(card => card.market !== "N/A")
-                    .sort((a, b) => parseFloat(a.market.replace(/[^0-9.]/g, "")) - parseFloat(b.market.replace(/[^0-9.]/g, "")));
-                if (sortedMain.length > 0) return sortedMain[0];
-            }
-            const sortedAll = cards
-                .filter(card => card.market !== "N/A")
-                .sort((a, b) => parseFloat(a.market.replace(/[^0-9.]/g, "")) - parseFloat(b.market.replace(/[^0-9.]/g, "")));
-            return sortedAll[0] || cards[0];
+            const mainSet = cards.filter((c) => !c.isSpecial && parsePrice(c.market) !== null);
+            if (mainSet.length > 0) return mainSet.sort((a, b) => parsePrice(a.market) - parsePrice(b.market))[0];
+            return cards.filter((c) => parsePrice(c.market) !== null).sort((a, b) => parsePrice(a.market) - parsePrice(b.market))[0] || cards[0];
         };
 
         const bestNonFoil = prioritizeMainSet(nonFoilCards);
         const bestFoil = prioritizeMainSet(foilCards);
-
-        await browser.close();
 
         let message = `${chatUser}, `;
         if (bestNonFoil && bestFoil) {
@@ -196,55 +138,27 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
 
         if (message.length > 390) message = message.slice(0, 387) + "...";
         return message;
-
     } catch (err) {
         console.error(`Error fetching card "${searchTerm}":`, err.message);
-        if (browser) {
-            try {
-                await browser.close();
-            } catch (closeErr) {
-                console.error('Error closing browser:', closeErr.message);
-            }
-        }
-        let message = `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
-        if (message.length > 390) message = message.slice(0, 387) + "...";
-        return message;
+        return `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
     }
 }
 
-// Price routes for Nightbot
+// Routes
 app.get("/price", async (req, res) => {
     const card = req.query.card || "";
     const user = req.query.user || "Streamer";
-    
-    if (!card.trim()) {
-        return res.type("text/plain").send(`${user}, please provide a card name!`);
-    }
-    
-    try {
-        const msg = await fetchCardPrice(card, user);
-        res.type("text/plain").send(msg);
-    } catch (error) {
-        console.error('Route error:', error);
-        res.type("text/plain").send(`${user}, server error for "${card}"`);
-    }
+    if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
+    const msg = await fetchCardPrice(card, user);
+    res.type("text/plain").send(msg);
 });
 
 app.get("/price/:card", async (req, res) => {
     const card = req.params.card || "";
     const user = req.query.user || "Streamer";
-    
-    if (!card.trim()) {
-        return res.type("text/plain").send(`${user}, please provide a card name!`);
-    }
-    
-    try {
-        const msg = await fetchCardPrice(card, user);
-        res.type("text/plain").send(msg);
-    } catch (error) {
-        console.error('Route error:', error);
-        res.type("text/plain").send(`${user}, server error for "${card}"`);
-    }
+    if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
+    const msg = await fetchCardPrice(card, user);
+    res.type("text/plain").send(msg);
 });
 
 app.listen(PORT, () => {
