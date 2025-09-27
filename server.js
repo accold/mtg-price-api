@@ -8,39 +8,31 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     try {
         console.log(`Searching for card: ${searchTerm}`);
         
-        // Find Chrome executable using shell command
+        // Explicitly find the Chrome executable
         let executablePath;
         try {
-            executablePath = require('child_process').execSync(
-                'find /opt/render/.cache/puppeteer -name chrome -type f 2>/dev/null | head -1', 
-                {encoding: 'utf8'}
-            ).trim();
+            const { execSync } = require('child_process');
+            executablePath = execSync('find /opt/render/.cache/puppeteer -name chrome -type f | head -1', { encoding: 'utf8' }).trim();
             console.log(`Found Chrome at: ${executablePath}`);
         } catch (e) {
-            console.log('Chrome not found in cache, using Puppeteer default');
-            executablePath = undefined;
+            console.log('Could not find Chrome with find command');
+            // Try a more specific path based on the error message
+            executablePath = '/opt/render/.cache/puppeteer/chrome/linux-140.0.7339.207/chrome-linux64/chrome';
+            console.log(`Trying specific path: ${executablePath}`);
         }
 
-        const launchOptions = {
+        browser = await puppeteer.launch({
             headless: true,
+            executablePath: executablePath,
             args: [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-accelerated-2d-canvas",
                 "--no-first-run",
-                "--disable-gpu",
-                "--disable-extensions"
+                "--disable-gpu"
             ]
-        };
-
-        if (executablePath) {
-            launchOptions.executablePath = executablePath;
-        }
-
-        console.log('Launching browser...');
-        browser = await puppeteer.launch(launchOptions);
-        console.log('Browser launched successfully');
+        });
 
         const page = await browser.newPage();
         await page.setUserAgent(
