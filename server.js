@@ -2,6 +2,37 @@ const express = require("express");
 const puppeteer = require("puppeteer");
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Basic test route
+app.get("/", (req, res) => {
+    res.send("TCG Card Price Bot is running!");
+});
+
+// Test Puppeteer route
+app.get("/test", async (req, res) => {
+    try {
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--disable-gpu"
+            ]
+        });
+        
+        const page = await browser.newPage();
+        await page.goto("https://example.com");
+        const title = await page.title();
+        await browser.close();
+        
+        res.json({ success: true, title: title });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
 
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     let browser;
@@ -181,7 +212,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     }
 }
 
-// --- Express routes for Nightbot ---
+// Price routes for Nightbot
 app.get("/price", async (req, res) => {
     const card = req.query.card || "";
     const user = req.query.user || "Streamer";
@@ -190,25 +221,12 @@ app.get("/price", async (req, res) => {
         return res.type("text/plain").send(`${user}, please provide a card name!`);
     }
     
-    // Set a timeout to prevent hanging
-    const timeout = setTimeout(() => {
-        if (!res.headersSent) {
-            res.type("text/plain").send(`${user}, request timed out for "${card}"`);
-        }
-    }, 25000); // 25 second timeout
-    
     try {
         const msg = await fetchCardPrice(card, user);
-        clearTimeout(timeout);
-        if (!res.headersSent) {
-            res.type("text/plain").send(msg);
-        }
+        res.type("text/plain").send(msg);
     } catch (error) {
-        clearTimeout(timeout);
         console.error('Route error:', error);
-        if (!res.headersSent) {
-            res.type("text/plain").send(`${user}, server error for "${card}"`);
-        }
+        res.type("text/plain").send(`${user}, server error for "${card}"`);
     }
 });
 
@@ -220,27 +238,15 @@ app.get("/price/:card", async (req, res) => {
         return res.type("text/plain").send(`${user}, please provide a card name!`);
     }
     
-    // Set a timeout to prevent hanging
-    const timeout = setTimeout(() => {
-        if (!res.headersSent) {
-            res.type("text/plain").send(`${user}, request timed out for "${card}"`);
-        }
-    }, 25000); // 25 second timeout
-    
     try {
         const msg = await fetchCardPrice(card, user);
-        clearTimeout(timeout);
-        if (!res.headersSent) {
-            res.type("text/plain").send(msg);
-        }
+        res.type("text/plain").send(msg);
     } catch (error) {
-        clearTimeout(timeout);
         console.error('Route error:', error);
-        if (!res.headersSent) {
-            res.type("text/plain").send(`${user}, server error for "${card}"`);
-        }
+        res.type("text/plain").send(`${user}, server error for "${card}"`);
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
