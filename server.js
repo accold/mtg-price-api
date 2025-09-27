@@ -4,15 +4,22 @@ const puppeteer = require("puppeteer");
 const app = express();
 
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
-    // Use the Render-provided Chrome path
-    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || 
-                          '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome';
-
     let browser;
     try {
-        browser = await puppeteer.launch({
+        // Find Chrome executable using shell command
+        let executablePath;
+        try {
+            executablePath = require('child_process').execSync(
+                'find /opt/render/.cache/puppeteer -name chrome -type f 2>/dev/null | head -1', 
+                {encoding: 'utf8'}
+            ).trim();
+        } catch (e) {
+            // Fallback to letting Puppeteer find Chrome
+            executablePath = undefined;
+        }
+
+        const launchOptions = {
             headless: true,
-            executablePath,
             args: [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
@@ -21,7 +28,13 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
                 "--no-first-run",
                 "--disable-gpu"
             ]
-        });
+        };
+
+        if (executablePath) {
+            launchOptions.executablePath = executablePath;
+        }
+
+        browser = await puppeteer.launch(launchOptions);
 
         const page = await browser.newPage();
         await page.setUserAgent(
