@@ -8,6 +8,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     try {
         browser = await puppeteer.launch({
             headless: true,
+            executablePath: puppeteer.executablePath(), // <- Use Puppeteer's downloaded Chromium
             args: [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
@@ -27,11 +28,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             searchTerm
         )}&view=grid`;
 
-        await page.goto(searchUrl, {
-            waitUntil: "networkidle0",
-            timeout: 30000,
-        });
-
+        await page.goto(searchUrl, { waitUntil: "networkidle0", timeout: 30000 });
         await new Promise((resolve) => setTimeout(resolve, 3000));
 
         let products = [];
@@ -156,25 +153,19 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
                 const sortedMain = mainSetCards
                     .filter((card) => card.market !== "N/A")
                     .sort((a, b) => {
-                        const priceA =
-                            parseFloat(a.market.replace(/[^0-9.]/g, "")) || 999999;
-                        const priceB =
-                            parseFloat(b.market.replace(/[^0-9.]/g, "")) || 999999;
+                        const priceA = parseFloat(a.market.replace(/[^0-9.]/g, "")) || 999999;
+                        const priceB = parseFloat(b.market.replace(/[^0-9.]/g, "")) || 999999;
                         return priceA - priceB;
                     });
 
-                if (sortedMain.length > 0) {
-                    return sortedMain[0];
-                }
+                if (sortedMain.length > 0) return sortedMain[0];
             }
 
             const sortedAll = cards
                 .filter((card) => card.market !== "N/A")
                 .sort((a, b) => {
-                    const priceA =
-                        parseFloat(a.market.replace(/[^0-9.]/g, "")) || 999999;
-                    const priceB =
-                        parseFloat(b.market.replace(/[^0-9.]/g, "")) || 999999;
+                    const priceA = parseFloat(a.market.replace(/[^0-9.]/g, "")) || 999999;
+                    const priceB = parseFloat(b.market.replace(/[^0-9.]/g, "")) || 999999;
                     return priceA - priceB;
                 });
 
@@ -195,7 +186,6 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             message += `Card: ${bestFoil.cleanTitle} (${bestFoil.setName}) | Regular: Not found | Foil: ${bestFoil.market}`;
         }
 
-        // Nightbot-safe trim (under 400 chars)
         if (message.length > 390) message = message.slice(0, 387) + "...";
         return message;
     } catch (err) {
@@ -206,7 +196,6 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     }
 }
 
-// --- Support both query and path style ---
 app.get("/price", async (req, res) => {
     const card = req.query.card || "";
     const user = req.query.user || "Streamer";
