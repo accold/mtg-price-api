@@ -1,14 +1,11 @@
 {
   "name": "tcgprice-nightbot",
   "version": "1.0.0",
-  "description": "TCGPlayer price checker for Nightbot hosted on Render",
-  "main": "server.js",
+  "main": "tcgprice.js",
   "scripts": {
-    "start": "node server.js",
-    "postinstall": "npx --yes @puppeteer/browsers@latest install chrome@stable"
+    "start": "node tcgprice.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "puppeteer": "^23.5.0"
+    "puppeteer": "^23.7.0"
   }
 }
