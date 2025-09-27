@@ -5,7 +5,7 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "build-cache": "bash puppeteer-cache.cjs",
+    "build-cache": "bash puppeteer-cache.js",
     "start": "node server.js"
   },
   "dependencies": {
