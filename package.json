@@ -1,7 +1,7 @@
 {
   "name": "tcgprice-nightbot",
   "version": "1.0.0",
-  "main": "tcgprice.js",
+  "main": "server.js",
   "scripts": {
     "start": "node tcgprice.js"
   },
