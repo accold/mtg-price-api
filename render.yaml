@@ -3,14 +3,16 @@ services:
     name: tcgprice-nightbot
     env: node
     plan: free
-    buildCommand: "npm install && npx puppeteer install --ignore-cache"
+    buildCommand: |
+      npm install
+      npx puppeteer browsers install chrome
     startCommand: "npm start"
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PUPPETEER_CACHE
-        value: /tmp/puppeteer
-      - key: PUPPETEER_SKIP_DOWNLOAD
-        value: "false"
+      # Puppeteer must run with these flags in Render
       - key: NODE_OPTIONS
         value: "--no-sandbox --disable-setuid-sandbox"
+      # Path to Chromium installed during build
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome
