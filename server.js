@@ -4,8 +4,13 @@ const puppeteer = require("puppeteer");
 const app = express();
 
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
-    // ✅ Use Render-provided executable path if available
-    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath();
+    // ✅ Use Render-provided path if set, otherwise Puppeteer's default
+    const customPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    const executablePath =
+        customPath && customPath.length > 0
+            ? customPath
+            : puppeteer.executablePath();
+
     let browser;
     try {
         browser = await puppeteer.launch({
@@ -26,7 +31,9 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         );
 
-        const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
+        const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
+            searchTerm
+        )}&view=grid`;
         await page.goto(searchUrl, { waitUntil: "networkidle0", timeout: 30000 });
         await new Promise(resolve => setTimeout(resolve, 3000));
 
