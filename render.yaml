@@ -3,13 +3,13 @@ services:
     name: tcgprice-nightbot
     env: node
     plan: free
-    buildCommand: "npm install && npx puppeteer install"
+    buildCommand: "npm install && npx puppeteer install --ignore-cache"
     startCommand: "npm start"
     envVars:
       - key: NODE_ENV
         value: production
       - key: PUPPETEER_CACHE
-        value: /opt/render/.cache/puppeteer
+        value: /tmp/puppeteer
       - key: PUPPETEER_SKIP_DOWNLOAD
         value: "false"
       - key: NODE_OPTIONS
