@@ -3,12 +3,14 @@ services:
     name: tcgprice-nightbot
     env: node
     plan: free
-    buildCommand: "npm install"
+    buildCommand: "npm install && npx puppeteer install"
     startCommand: "npm start"
     envVars:
       - key: NODE_ENV
         value: production
       - key: PUPPETEER_CACHE
-        value: /tmp/puppeteer
+        value: /opt/render/.cache/puppeteer
       - key: PUPPETEER_SKIP_DOWNLOAD
         value: "false"
+      - key: NODE_OPTIONS
+        value: "--no-sandbox --disable-setuid-sandbox"
