@@ -4,7 +4,8 @@
   "description": "TCGPlayer price checker for Nightbot hosted on Render",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "npx --yes @puppeteer/browsers@latest install chrome@stable"
   },
   "dependencies": {
     "express": "^4.19.2",
