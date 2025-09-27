@@ -6,24 +6,8 @@ const app = express();
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     let browser;
     try {
-        console.log(`Searching for card: ${searchTerm}`);
-        
-        // Explicitly find the Chrome executable
-        let executablePath;
-        try {
-            const { execSync } = require('child_process');
-            executablePath = execSync('find /opt/render/.cache/puppeteer -name chrome -type f | head -1', { encoding: 'utf8' }).trim();
-            console.log(`Found Chrome at: ${executablePath}`);
-        } catch (e) {
-            console.log('Could not find Chrome with find command');
-            // Try a more specific path based on the error message
-            executablePath = '/opt/render/.cache/puppeteer/chrome/linux-140.0.7339.207/chrome-linux64/chrome';
-            console.log(`Trying specific path: ${executablePath}`);
-        }
-
         browser = await puppeteer.launch({
             headless: true,
-            executablePath: executablePath,
             args: [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
