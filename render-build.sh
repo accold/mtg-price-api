@@ -5,15 +5,11 @@ set -o errexit
 # Install dependencies
 npm install
 
-# Set the Puppeteer cache directory environment variable
-export PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer
-mkdir -p $PUPPETEER_CACHE_DIR
+# Install Chrome
+npx puppeteer browsers install chrome
 
-# Install Chrome using Puppeteer
-npx puppeteer browsers install chrome --path $PUPPETEER_CACHE_DIR
+# Debug: Show where Chrome was installed
+echo "Chrome installation locations:"
+find /opt/render -name chrome -type f 2>/dev/null || echo "Chrome executable not found"
 
-# List what was installed for debugging
-echo "Contents of cache directory:"
-find $PUPPETEER_CACHE_DIR -type f -name "chrome*" 2>/dev/null || echo "No chrome files found"
-
-echo "Build completed successfully!"
+echo "Build completed!"
