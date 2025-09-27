@@ -1,18 +1,20 @@
 services:
   - type: web
-    name: tcgprice-nightbot
-    env: node
-    plan: free
+    name: tcg-card-price-bot
+    runtime: node
+    plan: starter  # or whatever plan you're using
     buildCommand: |
-      npm install
-      PUPPETEER_CACHE_DIR=/tmp/puppeteer npx puppeteer browsers install chrome
-    startCommand: "node server.js"
+      npm ci
+      npx puppeteer browsers install chrome
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: false
       - key: PUPPETEER_CACHE_DIR
-        value: /tmp/puppeteer
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /tmp/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome
-      - key: NODE_OPTIONS
-        value: "--no-sandbox --disable-setuid-sandbox"
+        value: /opt/render/project/.cache/puppeteer
+    disk:
+      name: puppeteer-cache
+      mountPath: /opt/render/project/.cache
+      sizeGB: 2
