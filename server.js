@@ -3,7 +3,7 @@ const puppeteer = require("puppeteer");
 
 const app = express();
 
-// Utility: Auto-scroll for lazy-loaded products
+// Auto-scroll for lazy-loaded products
 async function autoScroll(page) {
     await page.evaluate(async () => {
         await new Promise(resolve => {
@@ -22,7 +22,7 @@ async function autoScroll(page) {
     });
 }
 
-// Utility: Fuzzy match
+// Fuzzy match function
 const fuzzyMatch = (searchTerm, cardTitle) => {
     const searchWords = searchTerm.toLowerCase().split(/\s+/);
     const titleWords = cardTitle.toLowerCase().split(/\s+/);
@@ -39,27 +39,27 @@ const fuzzyMatch = (searchTerm, cardTitle) => {
     return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
 };
 
-// Prioritize main set cards by price
+// Select best card by price, prioritizing main sets
 const prioritizeMainSet = (cards) => {
     if (cards.length === 0) return null;
 
     const mainSetCards = cards.filter(card => !card.isSpecial);
     const sortedMain = mainSetCards
         .filter(card => card.market !== "N/A")
-        .sort((a, b) => (parseFloat(a.market.replace(/[^0-9.]/g, '')) || 999999) - 
+        .sort((a, b) => (parseFloat(a.market.replace(/[^0-9.]/g, '')) || 999999) -
                         (parseFloat(b.market.replace(/[^0-9.]/g, '')) || 999999));
 
     if (sortedMain.length > 0) return sortedMain[0];
 
     const sortedAll = cards
         .filter(card => card.market !== "N/A")
-        .sort((a, b) => (parseFloat(a.market.replace(/[^0-9.]/g, '')) || 999999) - 
+        .sort((a, b) => (parseFloat(a.market.replace(/[^0-9.]/g, '')) || 999999) -
                         (parseFloat(b.market.replace(/[^0-9.]/g, '')) || 999999));
 
     return sortedAll[0] || cards[0];
 };
 
-// Main API endpoint
+// Main endpoint
 app.get("/price", async (req, res) => {
     const searchTerm = req.query.card;
     if (!searchTerm) return res.send("Please provide a card name: ?card=NAME");
@@ -68,7 +68,6 @@ app.get("/price", async (req, res) => {
     try {
         browser = await puppeteer.launch({
             headless: true,
-            executablePath: process.env.CHROME_BIN || undefined,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -77,6 +76,7 @@ app.get("/price", async (req, res) => {
                 '--no-first-run',
                 '--disable-gpu'
             ]
+            // No executablePath needed! Puppeteer handles it internally
         });
 
         const page = await browser.newPage();
@@ -84,10 +84,9 @@ app.get("/price", async (req, res) => {
 
         const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
         await page.goto(searchUrl, { waitUntil: "networkidle0", timeout: 30000 });
-        await page.waitForTimeout(3000);  // Wait for dynamic content
+        await page.waitForTimeout(3000);
         await autoScroll(page);
 
-        // Try multiple selectors
         const selectors = ['.product-card__product', '.search-result', '.product-item', '[data-testid="product-card"]', '.product'];
         let products = [];
 
@@ -100,9 +99,9 @@ app.get("/price", async (req, res) => {
                         const priceEl = card.querySelector('.product-card__market-price--value') || card.querySelector('.market-price') || card.querySelector('.price') || card.querySelector('[data-testid="market-price"]');
                         const setEl = card.querySelector('.product-card__set-name__variant') || card.querySelector('.set-name') || card.querySelector('.product-set');
 
-                        const title = titleEl?.textContent?.trim() || "";
-                        const market = priceEl?.textContent?.trim() || "N/A";
-                        const setName = setEl?.textContent?.trim() || "";
+                        const title = titleEl?.textContent.trim() || "";
+                        const market = priceEl?.textContent.trim() || "N/A";
+                        const setName = setEl?.textContent.trim() || "";
 
                         if (!title) return null;
 
@@ -121,9 +120,7 @@ app.get("/price", async (req, res) => {
                 }, selector);
 
                 if (products.length > 0) break;
-            } catch (e) {
-                continue;
-            }
+            } catch (e) { continue; }
         }
 
         if (products.length === 0) {
@@ -169,6 +166,5 @@ app.get("/price", async (req, res) => {
     }
 });
 
-// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
