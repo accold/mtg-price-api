@@ -5,14 +5,14 @@ services:
     plan: free
     buildCommand: |
       npm install
-      npx puppeteer browsers install chrome
+      PUPPETEER_CACHE_DIR=/tmp/puppeteer npx puppeteer browsers install chrome
     startCommand: "npm start"
     envVars:
       - key: NODE_ENV
         value: production
-      # Puppeteer must run with these flags in Render
+      - key: PUPPETEER_CACHE_DIR
+        value: /tmp/puppeteer
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /tmp/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome
       - key: NODE_OPTIONS
         value: "--no-sandbox --disable-setuid-sandbox"
-      # Path to Chromium installed during build
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome
