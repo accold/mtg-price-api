@@ -2,7 +2,7 @@
   "name": "tcg-card-price-bot",
   "version": "1.0.0",
   "description": "TCG card price fetcher for Nightbot",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
