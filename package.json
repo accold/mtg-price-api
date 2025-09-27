@@ -1,2 +1,12 @@
-npm init -y
-npm install puppeteer express
+{
+  "name": "tcgprice-nightbot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "puppeteer": "^25.0.0"
+  }
+}
