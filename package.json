@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Magic: The Gathering card price bot using Puppeteer",
   "main": "server.js",
-  "type": "module",
   "scripts": {
     "build-cache": "bash puppeteer-cache.js",
     "start": "node server.js"
