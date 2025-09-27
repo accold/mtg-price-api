@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "start": "node tcgprice.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "puppeteer": "^23.7.0"
