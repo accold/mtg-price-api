@@ -4,12 +4,21 @@ const puppeteer = require("puppeteer");
 const app = express();
 
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
+    // ✅ Use Render-provided executable path if available
+    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath();
     let browser;
     try {
         browser = await puppeteer.launch({
             headless: true,
-            executablePath: puppeteer.executablePath(), // <- Use Puppeteer’s downloaded Chromium
-            args: ["--no-sandbox", "--disable-setuid-sandbox"]
+            executablePath,
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-accelerated-2d-canvas",
+                "--no-first-run",
+                "--disable-gpu"
+            ]
         });
 
         const page = await browser.newPage();
@@ -19,59 +28,64 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
 
         const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
         await page.goto(searchUrl, { waitUntil: "networkidle0", timeout: 30000 });
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
         let products = [];
         const selectors = [
             ".product-card__product",
             ".search-result",
             ".product-item",
-            '[data-testid="product-card"]',
-            ".product",
+            "[data-testid=\"product-card\"]",
+            ".product"
         ];
 
         for (const selector of selectors) {
             try {
                 await page.waitForSelector(selector, { timeout: 5000 });
                 products = await page.$$eval(selector, (cards) => {
-                    return cards
-                        .map((card) => {
-                            const titleEl =
-                                card.querySelector(".product-card__title") ||
-                                card.querySelector(".product-title") ||
-                                card.querySelector("h3") ||
-                                card.querySelector("h4") ||
-                                card.querySelector("[data-testid='product-title']");
-                            const priceEl =
-                                card.querySelector(".product-card__market-price--value") ||
-                                card.querySelector(".market-price") ||
-                                card.querySelector(".price") ||
-                                card.querySelector("[data-testid='market-price']");
-                            const setEl =
-                                card.querySelector(".product-card__set-name__variant") ||
-                                card.querySelector(".set-name") ||
-                                card.querySelector(".product-set");
+                    return cards.map(card => {
+                        const titleEl =
+                            card.querySelector(".product-card__title") ||
+                            card.querySelector(".product-title") ||
+                            card.querySelector("h3") ||
+                            card.querySelector("h4") ||
+                            card.querySelector("[data-testid=\"product-title\"]");
 
-                            const title = titleEl?.textContent?.trim() || "";
-                            const market = priceEl?.textContent?.trim() || "N/A";
-                            const setName = setEl?.textContent?.trim() || "";
+                        const priceEl =
+                            card.querySelector(".product-card__market-price--value") ||
+                            card.querySelector(".market-price") ||
+                            card.querySelector(".price") ||
+                            card.querySelector("[data-testid=\"market-price\"]");
 
-                            if (!title) return null;
-                            const isFoil = title.toLowerCase().includes("foil");
-                            const isSpecial = /(serialized|prestige|hyperspace|showcase|alternate art|extended art|organized play|promo|\(prestige\)|\(showcase\)|\(hyperspace\)|\(serialized\))/i.test(
-                                title + " " + setName
-                            );
+                        const setEl =
+                            card.querySelector(".product-card__set-name__variant") ||
+                            card.querySelector(".set-name") ||
+                            card.querySelector(".product-set");
 
-                            return {
-                                title,
-                                market,
-                                setName,
-                                isFoil,
-                                isSpecial,
-                                cleanTitle: title.toLowerCase().replace(/\(foil\)/gi, "").replace(/foil/gi, "").trim(),
-                            };
-                        })
-                        .filter(Boolean);
+                        const title = titleEl?.textContent?.trim() || "";
+                        const market = priceEl?.textContent?.trim() || "N/A";
+                        const setName = setEl?.textContent?.trim() || "";
+
+                        if (!title) return null;
+
+                        const isFoil = title.toLowerCase().includes("foil");
+                        const isSpecial = /(serialized|prestige|hyperspace|showcase|alternate art|extended art|organized play|promo|\(prestige\)|\(showcase\)|\(hyperspace\)|\(serialized\))/i.test(
+                            title + " " + setName
+                        );
+
+                        return {
+                            title,
+                            market,
+                            setName,
+                            isFoil,
+                            isSpecial,
+                            cleanTitle: title
+                                .toLowerCase()
+                                .replace(/\(foil\)/gi, "")
+                                .replace(/foil/gi, "")
+                                .trim()
+                        };
+                    }).filter(Boolean);
                 }, selector);
 
                 if (products.length > 0) break;
@@ -86,8 +100,8 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
         const fuzzyMatch = (searchTerm, cardTitle) => {
             const searchWords = searchTerm.toLowerCase().split(/\s+/);
             const titleWords = cardTitle.toLowerCase().split(/\s+/);
-            const matchedWords = searchWords.filter((searchWord) => {
-                return titleWords.some((titleWord) => {
+            const matchedWords = searchWords.filter(searchWord => {
+                return titleWords.some(titleWord => {
                     return (
                         titleWord.includes(searchWord) ||
                         searchWord.includes(titleWord) ||
@@ -99,7 +113,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
         };
 
-        const matchingCards = products.filter((card) => {
+        const matchingCards = products.filter(card => {
             const normalizedTitle = card.cleanTitle.replace(/\W/g, "");
             const normalizedFullTitle = card.title.toLowerCase().replace(/\W/g, "");
             return (
@@ -118,20 +132,20 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             return message;
         }
 
-        const nonFoilCards = matchingCards.filter((card) => !card.isFoil);
-        const foilCards = matchingCards.filter((card) => card.isFoil);
+        const nonFoilCards = matchingCards.filter(card => !card.isFoil);
+        const foilCards = matchingCards.filter(card => card.isFoil);
 
         const prioritizeMainSet = (cards) => {
             if (cards.length === 0) return null;
-            const mainSetCards = cards.filter((card) => !card.isSpecial);
+            const mainSetCards = cards.filter(card => !card.isSpecial);
             if (mainSetCards.length > 0) {
                 const sortedMain = mainSetCards
-                    .filter((card) => card.market !== "N/A")
+                    .filter(card => card.market !== "N/A")
                     .sort((a, b) => parseFloat(a.market.replace(/[^0-9.]/g, "")) - parseFloat(b.market.replace(/[^0-9.]/g, "")));
                 if (sortedMain.length > 0) return sortedMain[0];
             }
             const sortedAll = cards
-                .filter((card) => card.market !== "N/A")
+                .filter(card => card.market !== "N/A")
                 .sort((a, b) => parseFloat(a.market.replace(/[^0-9.]/g, "")) - parseFloat(b.market.replace(/[^0-9.]/g, "")));
             return sortedAll[0] || cards[0];
         };
@@ -161,7 +175,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     }
 }
 
-// --- Routes ---
+// --- Express routes for Nightbot ---
 app.get("/price", async (req, res) => {
     const card = req.query.card || "";
     const user = req.query.user || "Streamer";
