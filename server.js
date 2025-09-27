@@ -4,27 +4,37 @@ const puppeteer = require("puppeteer");
 const app = express();
 
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
-    // ✅ Use Render-provided path if set, otherwise Puppeteer's default
-    const customPath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    const executablePath =
-        customPath && customPath.length > 0
-            ? customPath
-            : puppeteer.executablePath();
-
     let browser;
     try {
-        browser = await puppeteer.launch({
+        // Better Chrome executable detection for cloud deployments
+        let launchOptions = {
             headless: true,
-            executablePath,
             args: [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-accelerated-2d-canvas",
                 "--no-first-run",
-                "--disable-gpu"
+                "--disable-gpu",
+                "--disable-web-security",
+                "--disable-features=VizDisplayCompositor",
+                "--single-process", // Important for some cloud platforms
+                "--no-zygote"
             ]
-        });
+        };
+
+        // Try different executable path strategies
+        const customPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        
+        if (customPath && require('fs').existsSync(customPath)) {
+            launchOptions.executablePath = customPath;
+        } else {
+            // Don't specify executablePath - let Puppeteer use its bundled Chromium
+            // This is often the most reliable approach on cloud platforms
+            console.log("Using Puppeteer's bundled Chromium");
+        }
+
+        browser = await puppeteer.launch(launchOptions);
 
         const page = await browser.newPage();
         await page.setUserAgent(
