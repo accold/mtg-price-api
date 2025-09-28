@@ -40,7 +40,7 @@ function fuzzyMatch(searchTerm, cardTitle) {
   return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
 }
 
-// Fetch card price
+// Fetch card/product price
 async function fetchCardPrice(searchTerm, chatUser="Streamer") {
   const cacheKey = searchTerm.toLowerCase();
   if (cache.has(cacheKey)) {
@@ -62,11 +62,12 @@ async function fetchCardPrice(searchTerm, chatUser="Streamer") {
 
     // Go to TCGPlayer homepage
     await page.goto("https://www.tcgplayer.com/", { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(1000);
 
-    // Fill the search input and submit
-    const searchInput = await page.$('#autocomplete-input');
+    // Wait for search input to appear (any category)
+    const searchInput = await page.waitForSelector('#autocomplete-input', { timeout: 10000 });
     if (!searchInput) throw new Error("Search input not found on page");
+
+    // Fill the search term and submit
     await searchInput.fill(searchTerm);
     await searchInput.press("Enter");
 
@@ -128,8 +129,8 @@ async function fetchCardPrice(searchTerm, chatUser="Streamer") {
     return message;
 
   } catch(err){
-    console.error(`Error fetching card "${searchTerm}":`, err.message);
-    return `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
+    console.error(`Error fetching card/product "${searchTerm}":`, err.message);
+    return `${chatUser}, failed to fetch card/product "${searchTerm}" - ${err.message}`;
   } finally {
     if (page) await page.close();
     if (context) await context.close();
