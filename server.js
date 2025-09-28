@@ -52,11 +52,26 @@ async function fetchCardPrice(searchTerm, chatUser="Streamer") {
   try {
     const browser = await getBrowser();
     page = await browser.newPage();
-    const url = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(2500); // Ensure dynamic content loads
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+    );
 
-    const products = await page.$$eval(".product-card", cards => 
+    // Go to TCGPlayer homepage
+    await page.goto("https://www.tcgplayer.com/", { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(1000);
+
+    // Fill the search input
+    const searchInput = await page.$('#autocomplete-input');
+    if (!searchInput) throw new Error("Search input not found on page");
+    await searchInput.fill(searchTerm);
+    await searchInput.press("Enter");
+
+    // Wait for products to render
+    await page.waitForTimeout(2500);
+
+    // Scrape product cards
+    const products = await page.$$eval(".product-card", cards =>
       cards.map(el => {
         const title = el.querySelector(".product-card__title.truncate")?.innerText.trim() || "";
         const setName = el.querySelector(".product-card__set-name__variant")?.innerText.trim() || "";
@@ -73,6 +88,7 @@ async function fetchCardPrice(searchTerm, chatUser="Streamer") {
       return result;
     }
 
+    // Fuzzy match
     const matchingCards = products.filter(c =>
       c.cleanTitle.includes(searchTerm.toLowerCase()) ||
       fuzzyMatch(searchTerm, c.title) ||
