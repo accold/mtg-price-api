@@ -1,141 +1,206 @@
-from flask import Flask, request
 import asyncio
-from playwright.async_api import async_playwright
 import re
-import time
+import urllib.parse
+from pyppeteer import launch
 
-app = Flask(__name__)
-cache = {}  # Simple in-memory cache
+async def run(runRequest):
+    logger = runRequest['modules']['logger']
+    chatUser = runRequest['trigger']['metadata'].get('username', 'Streamer')
+    args = runRequest['trigger']['metadata'].get('userCommand', {}).get('args', [])
+    searchTerm = ' '.join(args).strip()
 
-# Parse price strings to float
-def parse_price(price_str):
-    if not price_str or price_str == "N/A":
-        return None
+    logger.info(f"Searching TCGPlayer for: {searchTerm}")
+
+    response = {
+        "success": True,
+        "effects": []
+    }
+
+    if not searchTerm:
+        response['effects'].append({
+            "type": "firebot:chat",
+            "message": f"{chatUser}, please provide a card name!",
+            "chatter": "bot"
+        })
+        return response
+
+    browser = None
     try:
-        return float(re.sub(r"[^0-9.]", "", price_str))
-    except:
-        return None
+        browser = await launch({
+            'headless': True,
+            'args': [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--disable-gpu'
+            ]
+        })
+        page = await browser.newPage()
+        await page.setUserAgent(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        )
 
-# Fuzzy match
-def fuzzy_match(search_term, card_title):
-    search_words = search_term.lower().split()
-    title_words = card_title.lower().split()
-    matched = [w for w in search_words if any(
-        tw.find(w) != -1 or w.find(tw) != -1 or (abs(len(tw)-len(w)) <= 1 and tw[:-1] == w[:-1])
-        for tw in title_words
-    )]
-    return len(matched) >= max(1, int(len(search_words)*0.8))
+        search_url = f"https://www.tcgplayer.com/search/all/product?q={urllib.parse.quote(searchTerm)}&view=grid"
+        logger.info(f"Navigating to: {search_url}")
+        await page.goto(search_url, {'waitUntil': 'networkidle2', 'timeout': 30000})
+        await asyncio.sleep(3)
 
-# Scraper
-async def fetch_card_price(search_term, chat_user="Streamer"):
-    cache_key = search_term.lower()
-    # Use cached result if within 30 sec
-    if cache_key in cache and time.time() - cache[cache_key]['time'] < 30:
-        return cache[cache_key]['result'].replace("Streamer", chat_user)
+        selectors = [
+            '.product-card__product',
+            '.search-result',
+            '.product-item',
+            '[data-testid="product-card"]',
+            '.product'
+        ]
 
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-            context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
-            page = await context.new_page()
+        products = []
 
-            # Go to TCGPlayer homepage
-            await page.goto("https://www.tcgplayer.com/", wait_until="domcontentloaded")
+        for selector in selectors:
+            try:
+                await page.waitForSelector(selector, {'timeout': 5000})
+                elements = await page.querySelectorAll(selector)
+                for el in elements:
+                    title_el = await el.querySelector('.product-card__title') or \
+                               await el.querySelector('.product-title') or \
+                               await el.querySelector('h3') or \
+                               await el.querySelector('h4') or \
+                               await el.querySelector('[data-testid="product-title"]')
+                    price_el = await el.querySelector('.product-card__market-price--value') or \
+                               await el.querySelector('.market-price') or \
+                               await el.querySelector('.price') or \
+                               await el.querySelector('[data-testid="market-price"]')
+                    set_el = await el.querySelector('.product-card__set-name__variant') or \
+                             await el.querySelector('.set-name') or \
+                             await el.querySelector('.product-set')
 
-            # Wait for search input
-            input_el = await page.wait_for_selector("#autocomplete-input", timeout=10000)
-            await input_el.fill(search_term)
-            await input_el.press("Enter")
+                    title = await title_el.getProperty('textContent')
+                    title = (await title.jsonValue()).strip() if title else ''
+                    market = await price_el.getProperty('textContent') if price_el else None
+                    market = (await market.jsonValue()).strip() if market else 'N/A'
+                    setName = await set_el.getProperty('textContent') if set_el else None
+                    setName = (await setName.jsonValue()).strip() if setName else ''
 
-            # Wait for product cards to render
-            await page.wait_for_timeout(2500)
+                    if not title:
+                        continue
 
-            # Scrape product cards
-            products = await page.query_selector_all(".product-card")
-            product_list = []
-            for el in products:
-                title_el = await el.query_selector(".product-card__title.truncate")
-                set_el = await el.query_selector(".product-card__set-name__variant")
-                price_el = await el.query_selector(".product-card__market-price--value")
-                title = (await title_el.inner_text()).strip() if title_el else ""
-                set_name = (await set_el.inner_text()).strip() if set_el else ""
-                market = (await price_el.inner_text()).strip() if price_el else "N/A"
-                is_foil = "foil" in title.lower()
-                is_special = re.search(r"(serialized|prestige|hyperspace|showcase|alternate art|extended art|organized play|promo|\(prestige\)|\(showcase\)|\(hyperspace\)|\(serialized\))", title + " " + set_name, re.I)
-                clean_title = re.sub(r"\(foil\)", "", title, flags=re.I).strip().lower()
-                if title:
-                    product_list.append({
-                        "title": title,
-                        "setName": set_name,
-                        "market": market,
-                        "isFoil": is_foil,
-                        "isSpecial": bool(is_special),
-                        "cleanTitle": clean_title
+                    isFoil = 'foil' in title.lower()
+                    isSpecial = bool(re.search(r"(serialized|prestige|hyperspace|showcase|alternate art|extended art|organized play|promo|\(prestige\)|\(showcase\)|\(hyperspace\)|\(serialized\))",
+                                                title + ' ' + setName, re.I))
+                    cleanTitle = re.sub(r'\(foil\)|foil', '', title, flags=re.I).strip().lower()
+
+                    products.append({
+                        'title': title,
+                        'market': market,
+                        'setName': setName,
+                        'isFoil': isFoil,
+                        'isSpecial': isSpecial,
+                        'cleanTitle': cleanTitle
                     })
 
+                if products:
+                    break
+            except Exception:
+                continue
+
+        if not products:
+            raise Exception("No product cards found with any selector")
+
+        logger.info(f"Found {len(products)} total products")
+
+        normalizedSearch = re.sub(r'\W', '', searchTerm.lower())
+
+        def fuzzy_match(searchTerm, cardTitle):
+            searchWords = searchTerm.lower().split()
+            titleWords = cardTitle.lower().split()
+            matched = [w for w in searchWords if any(
+                w in tw or tw in w or (abs(len(tw)-len(w)) <= 1 and tw[:-1] == w[:-1])
+                for tw in titleWords)]
+            return len(matched) >= max(1, int(len(searchWords)*0.8))
+
+        matchingCards = [c for c in products if
+                         normalizedSearch in re.sub(r'\W', '', c['cleanTitle']) or
+                         normalizedSearch in re.sub(r'\W', '', c['title'].lower()) or
+                         fuzzy_match(searchTerm, c['title']) or
+                         fuzzy_match(searchTerm, c['cleanTitle'])]
+
+        logger.info(f"Found {len(matchingCards)} matching cards after filtering")
+
+        if not matchingCards:
+            fallback = products[0]
+            response['effects'].append({
+                "type": "firebot:chat",
+                "message": f"{chatUser}, no exact match for '{searchTerm}'. Found: {fallback['title']} ({fallback['setName']}) | Price: {fallback['market']}",
+                "chatter": "bot"
+            })
             await browser.close()
+            return response
 
-            if not product_list:
-                result = f"{chat_user}, no product cards found for \"{search_term}\""
-                cache[cache_key] = {'result': result, 'time': time.time()}
-                return result
+        nonFoilCards = [c for c in matchingCards if not c['isFoil']]
+        foilCards = [c for c in matchingCards if c['isFoil']]
 
-            # Fuzzy matching
-            matching_cards = [c for c in product_list if
-                              search_term.lower() in c['cleanTitle'] or
-                              fuzzy_match(search_term, c['title']) or
-                              fuzzy_match(search_term, c['cleanTitle'])]
-            fallback_card = product_list[0]
+        def prioritize_main_set(cards):
+            if not cards:
+                return None
+            mainSetCards = [c for c in cards if not c['isSpecial']]
+            sortedMain = sorted(
+                [c for c in mainSetCards if c['market'] != 'N/A'],
+                key=lambda x: float(re.sub(r'[^0-9.]', '', x['market']) or 999999)
+            )
+            if sortedMain:
+                return sortedMain[0]
+            sortedAll = sorted(
+                [c for c in cards if c['market'] != 'N/A'],
+                key=lambda x: float(re.sub(r'[^0-9.]', '', x['market']) or 999999)
+            )
+            return sortedAll[0] if sortedAll else cards[0]
 
-            non_foil = [c for c in matching_cards if not c['isFoil']]
-            foil = [c for c in matching_cards if c['isFoil']]
+        bestNonFoil = prioritize_main_set(nonFoilCards)
+        bestFoil = prioritize_main_set(foilCards)
 
-            def prioritize(cards):
-                if not cards:
-                    return None
-                main_set = [c for c in cards if not c['isSpecial'] and parse_price(c['market']) is not None]
-                if main_set:
-                    return sorted(main_set, key=lambda x: parse_price(x['market']))[0]
-                valid = [c for c in cards if parse_price(c['market']) is not None]
-                return sorted(valid, key=lambda x: parse_price(x['market']))[0] if valid else cards[0]
+        await browser.close()
 
-            best_non_foil = prioritize(non_foil)
-            best_foil = prioritize(foil)
+        message = f"{chatUser}, "
+        if bestNonFoil and bestFoil:
+            message += f"Card: {bestNonFoil['cleanTitle']} ({bestNonFoil['setName']}) | Regular: {bestNonFoil['market']} | Foil: {bestFoil['market']}"
+        elif bestNonFoil:
+            message += f"Card: {bestNonFoil['title']} ({bestNonFoil['setName']}) | Market: {bestNonFoil['market']} | Foil: Not found"
+        elif bestFoil:
+            message += f"Card: {bestFoil['cleanTitle']} ({bestFoil['setName']}) | Regular: Not found | Foil: {bestFoil['market']}"
 
-            message = f"{chat_user}, "
-            if best_non_foil and best_foil:
-                message += f"Card: {best_non_foil['cleanTitle']} ({best_non_foil['setName']}) | Regular: {best_non_foil['market']} | Foil: {best_foil['market']}"
-            elif best_non_foil:
-                message += f"Card: {best_non_foil['title']} ({best_non_foil['setName']}) | Market: {best_non_foil['market']} | Foil: Not found"
-            elif best_foil:
-                message += f"Card: {best_foil['cleanTitle']} ({best_foil['setName']}) | Regular: Not found | Foil: {best_foil['market']}"
+        response['effects'].append({
+            "type": "firebot:chat",
+            "message": message,
+            "chatter": "bot"
+        })
 
-            if len(message) > 390:
-                message = message[:387] + "..."
-
-            cache[cache_key] = {'result': message, 'time': time.time()}
-            return message
+        return response
 
     except Exception as e:
-        return f"{chat_user}, failed to fetch card/product \"{search_term}\" - {str(e)}"
+        logger.error(f"Error fetching card: {str(e)}")
+        if browser:
+            await browser.close()
+        response['success'] = False
+        response['effects'].append({
+            "type": "firebot:chat",
+            "message": f"{chatUser}, failed to fetch card '{searchTerm}' - {str(e)}",
+            "chatter": "bot"
+        })
+        return response
 
-# Flask endpoint
-@app.route("/price")
-def price():
-    card = request.args.get("card") or request.args.get("q") or ""
-    user = request.args.get("user") or "Streamer"
-    if not card.strip():
-        return f"{user}, please provide a card name!"
-    result = asyncio.run(fetch_card_price(card, user))
-    return result
-
-@app.route("/health")
-def health():
-    return "OK"
-    
-import os
-
+# Example run for testing
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 3000))
-    # bind to 0.0.0.0 so Render can reach it
-    app.run(host="0.0.0.0", port=port)
+    class DummyLogger:
+        def info(self, msg): print("[INFO]", msg)
+        def error(self, msg): print("[ERROR]", msg)
+
+    dummy_run_request = {
+        "modules": {"logger": DummyLogger()},
+        "trigger": {"metadata": {"username": "Tester", "userCommand": {"args": ["cancel"]}}}
+    }
+
+    result = asyncio.get_event_loop().run_until_complete(run(dummy_run_request))
+    import json
+    print(json.dumps(result, indent=4))
