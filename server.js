@@ -4,7 +4,7 @@ const { chromium } = require("playwright");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Normalize price strings
+// Normalize price strings to numbers
 function parsePrice(priceStr) {
   if (!priceStr || priceStr === "N/A") return null;
   return parseFloat(priceStr.replace(/[^0-9.]/g, ""));
@@ -29,36 +29,24 @@ function fuzzyMatch(searchTerm, cardTitle) {
 // Scrape card prices with Playwright
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
   let browser;
-  let timeoutTriggered = false;
-
   try {
     browser = await chromium.launch({ headless: true });
-
     const page = await browser.newPage();
-    const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
-      searchTerm
-    )}&view=grid`;
 
-    // Set a 20-second max timeout to avoid Nightbot timeout
-    const pagePromise = page.goto(searchUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 20000,
-    });
+    // Limit total wait for selectors
+    page.setDefaultTimeout(20000);
 
-    // Fallback timeout
-    const fallback = new Promise((resolve) => {
-      setTimeout(() => {
-        timeoutTriggered = true;
-        resolve(null);
-      }, 18000); // 18 seconds
-    });
+    const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
+    await page.goto(searchUrl, { waitUntil: "load" });
 
-    await Promise.race([pagePromise, fallback]);
-    if (timeoutTriggered) {
-      return `${chatUser}, fetching "${searchTerm}" is taking too long. Try again in a moment.`;
+    try {
+      await page.waitForSelector(
+        ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product"
+      );
+    } catch {
+      return `${chatUser}, no product cards loaded for "${searchTerm}"`;
     }
 
-    // Grab product cards
     const products = await page.$$eval(
       ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
       (cards) =>
@@ -83,7 +71,6 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             const title = titleEl ? titleEl.innerText.trim() : "";
             const market = priceEl ? priceEl.innerText.trim() : "N/A";
             const setName = setEl ? setEl.innerText.trim() : "";
-
             if (!title) return null;
 
             const isFoil = title.toLowerCase().includes("foil");
@@ -97,11 +84,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
               setName,
               isFoil,
               isSpecial,
-              cleanTitle: title
-                .toLowerCase()
-                .replace(/\(foil\)/gi, "")
-                .replace(/foil/gi, "")
-                .trim(),
+              cleanTitle: title.toLowerCase().replace(/\(foil\)/gi, "").replace(/foil/gi, "").trim(),
             };
           })
           .filter(Boolean)
@@ -137,9 +120,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
       if (mainSet.length > 0)
         return mainSet.sort((a, b) => parsePrice(a.market) - parsePrice(b.market))[0];
       return (
-        cards
-          .filter((c) => parsePrice(c.market) !== null)
-          .sort((a, b) => parsePrice(a.market) - parsePrice(b.market))[0] || cards[0]
+        cards.filter((c) => parsePrice(c.market) !== null).sort((a, b) => parsePrice(a.market) - parsePrice(b.market))[0] || cards[0]
       );
     };
 
@@ -169,8 +150,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
 app.get("/price", async (req, res) => {
   const card = req.query.card || "";
   const user = req.query.user || "Streamer";
-  if (!card.trim())
-    return res.type("text/plain").send(`${user}, please provide a card name!`);
+  if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
   const msg = await fetchCardPrice(card, user);
   res.type("text/plain").send(msg);
 });
@@ -178,8 +158,7 @@ app.get("/price", async (req, res) => {
 app.get("/price/:card", async (req, res) => {
   const card = req.params.card || "";
   const user = req.query.user || "Streamer";
-  if (!card.trim())
-    return res.type("text/plain").send(`${user}, please provide a card name!`);
+  if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
   const msg = await fetchCardPrice(card, user);
   res.type("text/plain").send(msg);
 });
