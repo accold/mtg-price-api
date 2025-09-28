@@ -64,18 +64,9 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     const browser = await getBrowser();
     page = await browser.newPage();
 
-    // Make it look like a real browser
+    // Make it look like a real browser - use correct Playwright methods
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
     await page.setViewportSize({ width: 1920, height: 1080 });
-    
-    // Set extra HTTP headers to look more legitimate
-    await page.setExtraHTTPHeaders({
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Accept-Encoding': 'gzip, deflate',
-      'DNT': '1',
-      'Connection': 'keep-alive',
-    });
 
     const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
       searchTerm
