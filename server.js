@@ -11,7 +11,13 @@ async function getBrowser() {
   if (!browserInstance) {
     browserInstance = await chromium.launch({ 
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor'
+      ]
     });
   }
   return browserInstance;
@@ -58,15 +64,28 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     const browser = await getBrowser();
     page = await browser.newPage();
 
+    // Make it look like a real browser
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    
+    // Set extra HTTP headers to look more legitimate
+    await page.setExtraHTTPHeaders({
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Accept-Encoding': 'gzip, deflate',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+    });
+
     const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
       searchTerm
     )}&view=grid`;
     
-    // SPEED OPTIMIZATION: Wait for network idle instead of arbitrary timeout
-    await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 15000 });
+    // SPEED OPTIMIZATION: Load faster with domcontentloaded
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 10000 });
 
-    // Wait for page to fully load JavaScript content
-    await page.waitForLoadState('networkidle');
+    // Give JavaScript a moment to render but don't wait for full network idle
+    await page.waitForTimeout(2000);
     
     // Debug: Let's see what's actually on the page
     console.log('Page title:', await page.title());
