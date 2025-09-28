@@ -48,20 +48,23 @@ async function fetchCardPrice(searchTerm, chatUser="Streamer") {
     if (Date.now() - cached.time < 30000) return cached.result.replace("Streamer", chatUser);
   }
 
-  let page;
+  let page, context;
   try {
     const browser = await getBrowser();
-    page = await browser.newPage();
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-    );
+
+    // Create a context with user agent
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+    });
+
+    page = await context.newPage();
 
     // Go to TCGPlayer homepage
     await page.goto("https://www.tcgplayer.com/", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1000);
 
-    // Fill the search input
+    // Fill the search input and submit
     const searchInput = await page.$('#autocomplete-input');
     if (!searchInput) throw new Error("Search input not found on page");
     await searchInput.fill(searchTerm);
@@ -129,6 +132,7 @@ async function fetchCardPrice(searchTerm, chatUser="Streamer") {
     return `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
   } finally {
     if (page) await page.close();
+    if (context) await context.close();
   }
 }
 
