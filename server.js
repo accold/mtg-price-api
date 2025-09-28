@@ -15,8 +15,7 @@ async function getBrowser() {
         '--no-sandbox', 
         '--disable-setuid-sandbox',
         '--disable-blink-features=AutomationControlled',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor'
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       ]
     });
   }
@@ -64,13 +63,11 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     const browser = await getBrowser();
     page = await browser.newPage();
 
-    // Make it look like a real browser - use correct Playwright methods
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-    await page.setViewportSize({ width: 1920, height: 1080 });
-
     const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
       searchTerm
     )}&view=grid`;
+    
+    console.log(`Trying to load: ${searchUrl}`);
     
     // SPEED OPTIMIZATION: Load faster with domcontentloaded
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 10000 });
