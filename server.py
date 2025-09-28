@@ -132,6 +132,8 @@ def price():
 @app.route("/health")
 def health():
     return "OK"
+    
+import os
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
