@@ -26,64 +26,70 @@ function fuzzyMatch(searchTerm, cardTitle) {
   return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
 }
 
-// Scrape card prices with proper awaits
+// Scrape card prices with Playwright
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
   let browser;
   try {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
+
     const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
       searchTerm
     )}&view=grid`;
-
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
 
-    // Grab product cards manually with await
-    const selectors = [
-      ".product-card__product",
-      ".search-result",
-      ".product-item",
-      "[data-testid='product-card']",
-      ".product",
-    ];
+    // ✅ Wait for product cards to appear (dynamic JS content)
+    await page.waitForSelector(
+      ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
+      { timeout: 30000 }
+    );
 
-    let products = [];
-    for (const sel of selectors) {
-      const cards = await page.$$(sel);
-      for (const card of cards) {
-        const titleEl = (await card.$(".product-card__title")) ||
-                        (await card.$(".product-title")) ||
-                        (await card.$("h3")) ||
-                        (await card.$("h4"));
-        const priceEl = (await card.$(".product-card__market-price--value")) ||
-                        (await card.$(".market-price")) ||
-                        (await card.$(".price"));
-        const setEl = (await card.$(".product-card__set-name__variant")) ||
-                      (await card.$(".set-name")) ||
-                      (await card.$(".product-set"));
+    // Grab product cards
+    const products = await page.$$eval(
+      ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
+      (cards) =>
+        cards.map((el) => {
+          const titleEl =
+            el.querySelector(".product-card__title") ||
+            el.querySelector(".product-title") ||
+            el.querySelector("h3") ||
+            el.querySelector("h4");
 
-        const title = titleEl ? (await titleEl.innerText()).trim() : "";
-        const market = priceEl ? (await priceEl.innerText()).trim() : "N/A";
-        const setName = setEl ? (await setEl.innerText()).trim() : "";
+          const priceEl =
+            el.querySelector(".product-card__market-price--value") ||
+            el.querySelector(".market-price") ||
+            el.querySelector(".price");
 
-        if (!title) continue;
+          const setEl =
+            el.querySelector(".product-card__set-name__variant") ||
+            el.querySelector(".set-name") ||
+            el.querySelector(".product-set");
 
-        const isFoil = title.toLowerCase().includes("foil");
-        const isSpecial = /(serialized|prestige|hyperspace|showcase|alternate art|extended art|organized play|promo|\(prestige\)|\(showcase\)|\(hyperspace\)|\(serialized\))/i.test(
-          title + " " + setName
-        );
+          const title = titleEl ? titleEl.innerText.trim() : "";
+          const market = priceEl ? priceEl.innerText.trim() : "N/A";
+          const setName = setEl ? setEl.innerText.trim() : "";
 
-        products.push({
-          title,
-          market,
-          setName,
-          isFoil,
-          isSpecial,
-          cleanTitle: title.toLowerCase().replace(/\(foil\)/gi, "").replace(/foil/gi, "").trim(),
-        });
-      }
-      if (products.length > 0) break;
-    }
+          if (!title) return null;
+
+          const isFoil = title.toLowerCase().includes("foil");
+          const isSpecial = /(serialized|prestige|hyperspace|showcase|alternate art|extended art|organized play|promo|\(prestige\)|\(showcase\)|\(hyperspace\)|\(serialized\))/i.test(
+            title + " " + setName
+          );
+
+          return {
+            title,
+            market,
+            setName,
+            isFoil,
+            isSpecial,
+            cleanTitle: title
+              .toLowerCase()
+              .replace(/\(foil\)/gi, "")
+              .replace(/foil/gi, "")
+              .trim(),
+          };
+        }).filter(Boolean)
+    );
 
     if (products.length === 0) {
       return `${chatUser}, no product cards found for "${searchTerm}"`;
@@ -147,7 +153,8 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
 app.get("/price", async (req, res) => {
   const card = req.query.card || "";
   const user = req.query.user || "Streamer";
-  if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
+  if (!card.trim())
+    return res.type("text/plain").send(`${user}, please provide a card name!`);
   const msg = await fetchCardPrice(card, user);
   res.type("text/plain").send(msg);
 });
@@ -155,7 +162,8 @@ app.get("/price", async (req, res) => {
 app.get("/price/:card", async (req, res) => {
   const card = req.params.card || "";
   const user = req.query.user || "Streamer";
-  if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
+  if (!card.trim())
+    return res.type("text/plain").send(`${user}, please provide a card name!`);
   const msg = await fetchCardPrice(card, user);
   res.type("text/plain").send(msg);
 });
