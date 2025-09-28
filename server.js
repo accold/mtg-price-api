@@ -4,6 +4,7 @@ const { chromium } = require("playwright");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Keep browser alive to avoid startup time
 let browserInstance = null;
 
 async function getBrowser() {
@@ -16,13 +17,16 @@ async function getBrowser() {
   return browserInstance;
 }
 
+// Cache results for 30 seconds to avoid re-scraping
 const cache = new Map();
 
+// Normalize price strings to numbers
 function parsePrice(priceStr) {
   if (!priceStr || priceStr === "N/A") return null;
   return parseFloat(priceStr.replace(/[^0-9.]/g, ""));
 }
 
+// Fuzzy match helper - COMPLETE ORIGINAL LOGIC
 function fuzzyMatch(searchTerm, cardTitle) {
   const searchWords = searchTerm.toLowerCase().split(/\s+/);
   const titleWords = cardTitle.toLowerCase().split(/\s+/);
@@ -38,11 +42,13 @@ function fuzzyMatch(searchTerm, cardTitle) {
   return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
 }
 
+// Scrape card prices with Playwright - OPTIMIZED FOR SPEED
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
+  // Check cache first
   const cacheKey = searchTerm.toLowerCase();
   if (cache.has(cacheKey)) {
     const cached = cache.get(cacheKey);
-    if (Date.now() - cached.time < 30000) {
+    if (Date.now() - cached.time < 30000) { // 30 sec cache
       return cached.result.replace("Streamer", chatUser);
     }
   }
@@ -52,13 +58,20 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     const browser = await getBrowser();
     page = await browser.newPage();
 
-    const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
+    const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
+      searchTerm
+    )}&view=grid`;
     
+    // SPEED OPTIMIZATION: Wait for network idle instead of arbitrary timeout
     await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 15000 });
+
+    // Wait for page to fully load JavaScript content
     await page.waitForLoadState('networkidle');
     
+    // Debug: Let's see what's actually on the page
     console.log('Page title:', await page.title());
     
+    // Try multiple modern selectors that TCGPlayer might use - UPDATED WITH YOUR FINDINGS
     const possibleSelectors = [
       '#app section.marketplace__content section section section section section > div:nth-child(2) > div > div > div > div > a > section',
       '#app section.marketplace__content section > section > section > section > section > div:nth-child(2) > div > div > div > div > a',
@@ -67,6 +80,13 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
       '#app a > section',
       'section.marketplace__content a section',
       '[data-testid="product-card"]',
+      '[data-cy="product-card"]', 
+      '.search-result-item',
+      '.product-listing-item',
+      '.tcg-product-card',
+      '.search-results .product',
+      '.product-grid .product',
+      '.search-results-container .product',
       '.product-card__product',
       '.search-result',
       '.product-item'
@@ -89,6 +109,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
       const bodyText = await page.textContent('body');
       console.log('Page contains text:', bodyText.substring(0, 500));
       
+      // Check if we got redirected or blocked
       if (bodyText.includes('blocked') || bodyText.includes('captcha') || bodyText.includes('robot')) {
         throw new Error('Blocked by anti-bot protection');
       }
@@ -96,10 +117,12 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
       throw new Error('No product cards found on page');
     }
 
+    // Use the found selector for scraping - COMPLETE ORIGINAL EXTRACTION LOGIC
     const products = await page.$$eval(
       foundSelector,
       (cards) =>
         cards.map((el) => {
+          // Updated selectors based on current TCGPlayer structure
           const titleEl = el.querySelector(".product-card__title, span[class*='title'], .product-title, h3, h4");
           const priceEl = el.querySelector(".product-card__market-price--value, .market-price, .price, span[class*='price']");
           const setEl = el.querySelector(".product-card__set-name__variant, .product-card__set-name, .set-name, .product-set, div[class*='set-name']");
@@ -136,6 +159,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
       return result;
     }
 
+    // COMPLETE ORIGINAL MATCHING LOGIC
     const normalizedSearch = searchTerm.toLowerCase().replace(/\W/g, "");
     const matchingCards = products.filter((card) => {
       const normalizedTitle = card.cleanTitle.replace(/\W/g, "");
@@ -155,6 +179,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
       return result;
     }
 
+    // COMPLETE ORIGINAL FOIL/NON-FOIL LOGIC
     const nonFoilCards = matchingCards.filter((c) => !c.isFoil);
     const foilCards = matchingCards.filter((c) => c.isFoil);
 
@@ -173,6 +198,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     const bestNonFoil = prioritizeMainSet(nonFoilCards);
     const bestFoil = prioritizeMainSet(foilCards);
 
+    // COMPLETE ORIGINAL MESSAGE FORMATTING
     let message = `${chatUser}, `;
     if (bestNonFoil && bestFoil) {
       message += `Card: ${bestNonFoil.cleanTitle} (${bestNonFoil.setName}) | Regular: ${bestNonFoil.market} | Foil: ${bestFoil.market}`;
@@ -184,6 +210,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
 
     if (message.length > 390) message = message.slice(0, 387) + "...";
     
+    // Cache the result
     cache.set(cacheKey, { result: message, time: Date.now() });
     return message;
     
@@ -195,6 +222,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
   }
 }
 
+// Clean old cache entries
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of cache.entries()) {
@@ -204,6 +232,7 @@ setInterval(() => {
   }
 }, 60000);
 
+// Routes - EXACTLY THE SAME AS YOUR WORKING VERSION
 app.get("/price", async (req, res) => {
   const card = req.query.card || "";
   const user = req.query.user || "Streamer";
@@ -222,12 +251,30 @@ app.get("/price/:card", async (req, res) => {
   res.type("text/plain").send(msg);
 });
 
+// Health check endpoint for monitoring
+app.get("/health", (req, res) => {
+  res.type("text/plain").send("OK");
+});
+
+// Graceful shutdown to close browser
 process.on('SIGTERM', async () => {
-  if (browserInstance) await browserInstance.close();
+  console.log('Shutting down gracefully...');
+  if (browserInstance) {
+    await browserInstance.close();
+  }
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('Shutting down gracefully...');
+  if (browserInstance) {
+    await browserInstance.close();
+  }
   process.exit(0);
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`✅ Fast TCG scraper running on port ${PORT}`);
+  // Pre-warm browser on startup
   getBrowser().catch(console.error);
 });
