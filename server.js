@@ -4,6 +4,19 @@ const { chromium } = require("playwright");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Keep browser instance alive to avoid repeated launches
+let browserInstance = null;
+
+async function getBrowser() {
+  if (!browserInstance) {
+    browserInstance = await chromium.launch({ 
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+  }
+  return browserInstance;
+}
+
 // Normalize price strings to numbers
 function parsePrice(priceStr) {
   if (!priceStr || priceStr === "N/A") return null;
@@ -26,32 +39,42 @@ function fuzzyMatch(searchTerm, cardTitle) {
   return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
 }
 
-// Scrape card prices with Playwright
+// Optimized scraper with shorter timeouts and persistent browser
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
-  let browser;
+  let page;
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    const browser = await getBrowser();
+    page = await browser.newPage();
 
-    // Limit total wait for selectors
-    page.setDefaultTimeout(20000);
+    // Set shorter timeout and faster navigation
+    page.setDefaultTimeout(6000);
+    page.setDefaultNavigationTimeout(6000);
 
-    const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
-    await page.goto(searchUrl, { waitUntil: "load" });
+    const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
+      searchTerm
+    )}&view=grid`;
+    
+    await page.goto(searchUrl, { 
+      waitUntil: "domcontentloaded", 
+      timeout: 6000 
+    });
 
+    // Shorter wait for product cards - fail fast if not found
     try {
       await page.waitForSelector(
-        ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product"
+        ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
+        { timeout: 5000 }
       );
-    } catch {
-      return `${chatUser}, no product cards loaded for "${searchTerm}"`;
+    } catch (e) {
+      return `${chatUser}, no results found for "${searchTerm}" (timeout)`;
     }
 
-    const products = await page.$$eval(
-      ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
-      (cards) =>
-        cards
-          .map((el) => {
+    // Grab product cards with timeout protection
+    const products = await Promise.race([
+      page.$$eval(
+        ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
+        (cards) =>
+          cards.slice(0, 15).map((el) => { // Process first 15 cards for balance of speed/accuracy
             const titleEl =
               el.querySelector(".product-card__title") ||
               el.querySelector(".product-title") ||
@@ -71,6 +94,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
             const title = titleEl ? titleEl.innerText.trim() : "";
             const market = priceEl ? priceEl.innerText.trim() : "N/A";
             const setName = setEl ? setEl.innerText.trim() : "";
+
             if (!title) return null;
 
             const isFoil = title.toLowerCase().includes("foil");
@@ -84,11 +108,16 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
               setName,
               isFoil,
               isSpecial,
-              cleanTitle: title.toLowerCase().replace(/\(foil\)/gi, "").replace(/foil/gi, "").trim(),
+              cleanTitle: title
+                .toLowerCase()
+                .replace(/\(foil\)/gi, "")
+                .replace(/foil/gi, "")
+                .trim(),
             };
-          })
-          .filter(Boolean)
-    );
+          }).filter(Boolean)
+      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Scraping timeout")), 4000))
+    ]);
 
     if (products.length === 0) {
       return `${chatUser}, no product cards found for "${searchTerm}"`;
@@ -120,7 +149,9 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
       if (mainSet.length > 0)
         return mainSet.sort((a, b) => parsePrice(a.market) - parsePrice(b.market))[0];
       return (
-        cards.filter((c) => parsePrice(c.market) !== null).sort((a, b) => parsePrice(a.market) - parsePrice(b.market))[0] || cards[0]
+        cards
+          .filter((c) => parsePrice(c.market) !== null)
+          .sort((a, b) => parsePrice(a.market) - parsePrice(b.market))[0] || cards[0]
       );
     };
 
@@ -138,29 +169,79 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
 
     if (message.length > 390) message = message.slice(0, 387) + "...";
     return message;
+
   } catch (err) {
     console.error(`Error fetching card "${searchTerm}":`, err.message);
     return `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
   } finally {
-    if (browser) await browser.close();
+    if (page) await page.close();
   }
 }
 
-// Routes
+// Add timeout middleware for all routes
+app.use((req, res, next) => {
+  // Set response timeout to 7 seconds for Nightbot compatibility
+  res.setTimeout(7000, () => {
+    res.status(408).type('text/plain').send('Request timeout - try again');
+  });
+  next();
+});
+
+// Original routes with timeout protection
 app.get("/price", async (req, res) => {
   const card = req.query.card || "";
   const user = req.query.user || "Streamer";
-  if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
-  const msg = await fetchCardPrice(card, user);
-  res.type("text/plain").send(msg);
+  if (!card.trim())
+    return res.type("text/plain").send(`${user}, please provide a card name!`);
+  
+  try {
+    const msg = await Promise.race([
+      fetchCardPrice(card, user),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Overall timeout")), 6500))
+    ]);
+    res.type("text/plain").send(msg);
+  } catch (error) {
+    res.type("text/plain").send(`${user}, request timed out - try a shorter card name`);
+  }
 });
 
 app.get("/price/:card", async (req, res) => {
   const card = req.params.card || "";
   const user = req.query.user || "Streamer";
-  if (!card.trim()) return res.type("text/plain").send(`${user}, please provide a card name!`);
-  const msg = await fetchCardPrice(card, user);
-  res.type("text/plain").send(msg);
+  if (!card.trim())
+    return res.type("text/plain").send(`${user}, please provide a card name!`);
+  
+  try {
+    const msg = await Promise.race([
+      fetchCardPrice(card, user),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Overall timeout")), 6500))
+    ]);
+    res.type("text/plain").send(msg);
+  } catch (error) {
+    res.type("text/plain").send(`${user}, request timed out - try again`);
+  }
 });
 
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+// Health check endpoint for monitoring
+app.get("/health", (req, res) => {
+  res.type("text/plain").send("OK");
+});
+
+// Graceful shutdown to close browser
+process.on('SIGTERM', async () => {
+  console.log('Shutting down gracefully...');
+  if (browserInstance) {
+    await browserInstance.close();
+  }
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('Shutting down gracefully...');
+  if (browserInstance) {
+    await browserInstance.close();
+  }
+  process.exit(0);
+});
+
+app.listen(PORT, () => console.log(`✅ Fast TCG scraper running on port ${PORT}`));
