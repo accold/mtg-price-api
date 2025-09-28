@@ -134,4 +134,6 @@ def health():
     return "OK"
 
 if __name__ == "__main__":
-    app.run(port=3000)
+    port = int(os.environ.get("PORT", 3000))
+    # bind to 0.0.0.0 so Render can reach it
+    app.run(host="0.0.0.0", port=port)
