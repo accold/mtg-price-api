@@ -62,18 +62,59 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
       searchTerm
     )}&view=grid`;
     
-    // SPEED OPTIMIZATION: Shorter timeouts
-    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 10000 });
+    // SPEED OPTIMIZATION: Wait for network idle instead of arbitrary timeout
+    await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 15000 });
 
-    // SPEED OPTIMIZATION: Wait less time for cards to appear
-    await page.waitForSelector(
-      ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
-      { timeout: 8000 }
-    );
+    // Wait for page to fully load JavaScript content
+    await page.waitForLoadState('networkidle');
+    
+    // Debug: Let's see what's actually on the page
+    console.log('Page title:', await page.title());
+    
+    // Try multiple modern selectors that TCGPlayer might use
+    const possibleSelectors = [
+      '[data-testid="product-card"]',
+      '[data-cy="product-card"]', 
+      '.search-result-item',
+      '.product-listing-item',
+      '.tcg-product-card',
+      '.search-results .product',
+      '.product-grid .product',
+      '.search-results-container .product',
+      '.product-card__product',
+      '.search-result',
+      '.product-item'
+    ];
+    
+    let foundSelector = null;
+    for (const selector of possibleSelectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 2000 });
+        console.log(`Found products with selector: ${selector}`);
+        foundSelector = selector;
+        break;
+      } catch (e) {
+        // Try next selector
+      }
+    }
+    
+    if (!foundSelector) {
+      // Debug: Take screenshot and log page content
+      console.log('No product selectors found. Page URL:', page.url());
+      const bodyText = await page.textContent('body');
+      console.log('Page contains text:', bodyText.substring(0, 500));
+      
+      // Check if we got redirected or blocked
+      if (bodyText.includes('blocked') || bodyText.includes('captcha') || bodyText.includes('robot')) {
+        throw new Error('Blocked by anti-bot protection');
+      }
+      
+      throw new Error('No product cards found on page');
+    }
 
-    // Grab product cards - SAME EXACT LOGIC AS YOUR WORKING VERSION
-    const products = await page.$$eval(
-      ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
+    // Use the found selector for scraping
+    const products = await page.$eval(
+      foundSelector,
       (cards) =>
         cards.map((el) => {
           const titleEl =
