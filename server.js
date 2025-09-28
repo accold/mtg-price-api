@@ -1,53 +1,11 @@
 const express = require("express");
-const { chromium } = require("playwright");
+const axios = require("axios");
+const cheerio = require("cheerio");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Keep browser alive and pre-create pages
-let browserInstance = null;
-let pagePool = [];
-
-async function getBrowser() {
-  if (!browserInstance) {
-    browserInstance = await chromium.launch({ 
-      headless: true,
-      args: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor',
-        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      ]
-    });
-    
-    // Pre-create 3 pages for instant use
-    for (let i = 0; i < 3; i++) {
-      const page = await browserInstance.newPage();
-      pagePool.push(page);
-    }
-    console.log('Browser ready with page pool');
-  }
-  return browserInstance;
-}
-
-function getPage() {
-  if (pagePool.length > 0) {
-    return pagePool.pop();
-  }
-  return browserInstance.newPage();
-}
-
-function returnPage(page) {
-  if (pagePool.length < 3) {
-    pagePool.push(page);
-  } else {
-    page.close();
-  }
-}
-
-// Aggressive cache - 2 minutes
+// Cache for 2 minutes
 const cache = new Map();
 
 function parsePrice(priceStr) {
@@ -55,7 +13,7 @@ function parsePrice(priceStr) {
   return parseFloat(priceStr.replace(/[^0-9.]/g, ""));
 }
 
-// Ultra-fast scraper - optimized for Nightbot's timeout
+// HTTP-only scraper - much faster than Playwright
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
   const cacheKey = searchTerm.toLowerCase();
   if (cache.has(cacheKey)) {
@@ -65,75 +23,96 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     }
   }
 
-  let page;
   try {
-    await getBrowser(); // Ensure browser is ready
-    page = await getPage();
-
     const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(searchTerm)}&view=grid`;
     
-    // Ultra aggressive timeouts for Nightbot
-    await page.goto(searchUrl, { 
-      waitUntil: "domcontentloaded", 
-      timeout: 4000 
+    console.log(`HTTP request to: ${searchUrl}`);
+    
+    const response = await axios.get(searchUrl, {
+      timeout: 5000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+      }
     });
 
-    // Wait just 1 second for JS to render
-    await page.waitForTimeout(1000);
-    
-    // Try the most likely selectors first
-    const quickSelectors = [
-      '#app a > section',
-      '.marketplace__content a section',
-      '.product-card__product'
+    const $ = cheerio.load(response.data);
+    console.log('Page loaded, looking for products...');
+
+    // Try multiple selectors for product cards
+    let products = [];
+    const selectors = [
+      '.product-card__product',
+      '.search-result',
+      '.product-item',
+      '[data-testid="product-card"]',
+      'a[href*="/product/"]'
     ];
-    
-    let foundSelector = null;
-    for (const selector of quickSelectors) {
-      const elements = await page.$$(selector);
+
+    for (const selector of selectors) {
+      const elements = $(selector);
       if (elements.length > 0) {
-        foundSelector = selector;
-        console.log(`Quick found: ${selector} (${elements.length} items)`);
-        break;
+        console.log(`Found ${elements.length} products with selector: ${selector}`);
+        
+        elements.each((i, el) => {
+          if (i >= 10) return; // Only process first 10
+          
+          const $el = $(el);
+          
+          // Try different title selectors
+          const title = $el.find('.product-card__title').text().trim() ||
+                       $el.find('[class*="title"]').text().trim() ||
+                       $el.find('h3, h4').text().trim() ||
+                       $el.text().trim().split('\n')[0];
+
+          // Try different price selectors  
+          const market = $el.find('.product-card__market-price--value').text().trim() ||
+                        $el.find('[class*="price"]').text().trim() ||
+                        $el.find('[class*="market"]').text().trim() ||
+                        'N/A';
+
+          // Try different set selectors
+          const setName = $el.find('.product-card__set-name__variant').text().trim() ||
+                         $el.find('[class*="set"]').text().trim() ||
+                         '';
+
+          if (title && title.length > 2) {
+            products.push({
+              title,
+              market,
+              setName,
+              isFoil: title.toLowerCase().includes("foil"),
+              cleanTitle: title.toLowerCase().replace(/\(foil\)/gi, "").replace(/foil/gi, "").trim()
+            });
+          }
+        });
+        
+        if (products.length > 0) break;
       }
     }
-    
-    if (!foundSelector) {
-      throw new Error('No products found quickly');
-    }
 
-    // Get just first 5 results for speed
-    const products = await page.$$eval(
-      foundSelector,
-      (cards) =>
-        cards.slice(0, 5).map((el) => {
-          const titleEl = el.querySelector(".product-card__title, span[class*='title'], h3, h4");
-          const priceEl = el.querySelector(".product-card__market-price--value, .market-price, .price");
-          const setEl = el.querySelector(".product-card__set-name__variant, .set-name");
-
-          const title = titleEl ? titleEl.innerText.trim() : "";
-          const market = priceEl ? priceEl.innerText.trim() : "N/A";
-          const setName = setEl ? setEl.innerText.trim() : "";
-
-          if (!title) return null;
-
-          return {
-            title,
-            market,
-            setName,
-            isFoil: title.toLowerCase().includes("foil"),
-            cleanTitle: title.toLowerCase().replace(/\(foil\)/gi, "").replace(/foil/gi, "").trim()
-          };
-        }).filter(Boolean)
-    );
-
+    // If no structured data found, try to extract from page text
     if (products.length === 0) {
-      const result = `${chatUser}, no results found for "${searchTerm}"`;
-      cache.set(cacheKey, { result, time: Date.now() });
-      return result;
+      console.log('No structured products found, trying text extraction...');
+      const pageText = $.text();
+      
+      // Look for price patterns in the text
+      const priceMatches = pageText.match(/\$\d+\.\d+/g);
+      if (priceMatches && priceMatches.length > 0) {
+        const result = `${chatUser}, found "${searchTerm}" but couldn't parse details. Try the website directly.`;
+        cache.set(cacheKey, { result, time: Date.now() });
+        return result;
+      }
+      
+      throw new Error('No products or prices found in page');
     }
 
-    // Simple matching - just check if search term is in title
+    console.log(`Extracted ${products.length} products`);
+
+    // Simple matching
     const searchLower = searchTerm.toLowerCase().replace(/[^a-z0-9]/g, '');
     const matches = products.filter(card => {
       const titleLower = card.title.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -156,21 +135,27 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     if (message.length > 390) message = message.slice(0, 387) + "...";
     
     cache.set(cacheKey, { result: message, time: Date.now() });
+    console.log(`Success: ${message}`);
     return message;
     
   } catch (err) {
-    console.error(`Fast error for "${searchTerm}":`, err.message);
-    return `${chatUser}, search timed out for "${searchTerm}"`;
-  } finally {
-    if (page) returnPage(page);
+    console.error(`HTTP error for "${searchTerm}":`, err.message);
+    
+    if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') {
+      return `${chatUser}, connection error - try again`;
+    } else if (err.response && err.response.status === 403) {
+      return `${chatUser}, blocked by website - try again later`;
+    } else {
+      return `${chatUser}, error finding "${searchTerm}"`;
+    }
   }
 }
 
-// Clean cache every minute
+// Clean cache
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of cache.entries()) {
-    if (now - value.time > 180000) { // 3 min
+    if (now - value.time > 180000) {
       cache.delete(key);
     }
   }
@@ -200,15 +185,6 @@ app.get("/health", (req, res) => {
   res.type("text/plain").send("OK");
 });
 
-process.on('SIGTERM', async () => {
-  if (browserInstance) await browserInstance.close();
-  process.exit(0);
-});
-
 app.listen(PORT, () => {
-  console.log(`✅ Ultra-fast server on port ${PORT}`);
-  // Pre-warm everything
-  getBrowser().then(() => {
-    console.log('🔥 Browser pre-warmed and ready');
-  }).catch(console.error);
+  console.log(`✅ HTTP-only scraper on port ${PORT}`);
 });
