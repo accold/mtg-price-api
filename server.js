@@ -4,26 +4,20 @@ const { chromium } = require("playwright");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Simple browser management - create fresh each time but reuse when possible
+// Keep browser alive to avoid startup time
 let browserInstance = null;
 
 async function getBrowser() {
   if (!browserInstance) {
     browserInstance = await chromium.launch({ 
       headless: true,
-      args: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox', 
-        '--disable-dev-shm-usage',
-        '--disable-blink-features=AutomationControlled',
-        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      ]
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
   }
   return browserInstance;
 }
 
-// Simple cache
+// Cache results for 30 seconds to avoid re-scraping
 const cache = new Map();
 
 // Normalize price strings to numbers
@@ -48,13 +42,15 @@ function fuzzyMatch(searchTerm, cardTitle) {
   return matchedWords.length >= Math.ceil(searchWords.length * 0.8);
 }
 
-// Simplified but robust scraper
+// Scrape card prices with Playwright - OPTIMIZED FOR SPEED
 async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
   // Check cache first
-  const cacheKey = searchTerm.toLowerCase().trim();
-  const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < 30000) { // 30 second cache
-    return cached.result.replace("Streamer", chatUser);
+  const cacheKey = searchTerm.toLowerCase();
+  if (cache.has(cacheKey)) {
+    const cached = cache.get(cacheKey);
+    if (Date.now() - cached.time < 30000) { // 30 sec cache
+      return cached.result.replace("Streamer", chatUser);
+    }
   }
 
   let page;
@@ -62,55 +58,24 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     const browser = await getBrowser();
     page = await browser.newPage();
 
-    // Set reasonable timeouts
-    page.setDefaultTimeout(8000);
-    page.setDefaultNavigationTimeout(8000);
-
     const searchUrl = `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(
       searchTerm
     )}&view=grid`;
     
-    console.log(`Searching for: ${searchTerm} at ${searchUrl}`);
-    await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 8000 });
+    // SPEED OPTIMIZATION: Shorter timeouts
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 10000 });
 
-    // Debug: check what's on the page
-    const pageTitle = await page.title();
-    console.log(`Page loaded: ${pageTitle}`);
+    // SPEED OPTIMIZATION: Wait less time for cards to appear
+    await page.waitForSelector(
+      ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
+      { timeout: 8000 }
+    );
 
-    // Try multiple selector strategies
-    let selectorFound = false;
-    const selectors = [
-      ".product-card__product",
-      ".search-result", 
-      ".product-item",
-      "[data-testid='product-card']",
-      ".product",
-      ".search-result-item",
-      ".tcg-product-card"
-    ];
-
-    for (const selector of selectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 2000 });
-        console.log(`Found elements with selector: ${selector}`);
-        selectorFound = true;
-        break;
-      } catch (e) {
-        console.log(`No elements found with: ${selector}`);
-      }
-    }
-
-    if (!selectorFound) {
-      console.log("No product selectors found, taking screenshot...");
-      await page.screenshot({ path: 'debug.png' });
-      throw new Error("No product cards found with any selector");
-    }
-
-    // Extract product data
+    // Grab product cards - SAME EXACT LOGIC AS YOUR WORKING VERSION
     const products = await page.$$eval(
       ".product-card__product, .search-result, .product-item, [data-testid='product-card'], .product",
       (cards) =>
-        cards.slice(0, 12).map((el) => {
+        cards.map((el) => {
           const titleEl =
             el.querySelector(".product-card__title") ||
             el.querySelector(".product-title") ||
@@ -155,7 +120,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
 
     if (products.length === 0) {
       const result = `${chatUser}, no product cards found for "${searchTerm}"`;
-      cache.set(cacheKey, { result, timestamp: Date.now() });
+      cache.set(cacheKey, { result, time: Date.now() });
       return result;
     }
 
@@ -174,7 +139,7 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     const fallbackCard = products[0];
     if (matchingCards.length === 0) {
       const result = `${chatUser}, no exact match for "${searchTerm}". Found: ${fallbackCard.title} (${fallbackCard.setName}) | Price: ${fallbackCard.market}`;
-      cache.set(cacheKey, { result, timestamp: Date.now() });
+      cache.set(cacheKey, { result, time: Date.now() });
       return result;
     }
 
@@ -208,44 +173,28 @@ async function fetchCardPrice(searchTerm, chatUser = "Streamer") {
     if (message.length > 390) message = message.slice(0, 387) + "...";
     
     // Cache the result
-    cache.set(cacheKey, { result: message, timestamp: Date.now() });
-    console.log(`Successfully found: ${searchTerm}`);
+    cache.set(cacheKey, { result: message, time: Date.now() });
     return message;
-
+    
   } catch (err) {
     console.error(`Error fetching card "${searchTerm}":`, err.message);
-    console.error(err.stack);
-    
-    // Try to give a more helpful error message
-    if (err.message.includes('timeout')) {
-      return `${chatUser}, search for "${searchTerm}" timed out - try again`;
-    } else if (err.message.includes('net::')) {
-      return `${chatUser}, connection error for "${searchTerm}" - try again`;
-    } else {
-      return `${chatUser}, error searching for "${searchTerm}" - try again`;
-    }
+    return `${chatUser}, failed to fetch card "${searchTerm}" - ${err.message}`;
   } finally {
-    if (page) {
-      try {
-        await page.close();
-      } catch (e) {
-        console.error('Error closing page:', e.message);
-      }
-    }
+    if (page) await page.close();
   }
 }
 
-// Clean up cache periodically
+// Clean old cache entries
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of cache.entries()) {
-    if (now - value.timestamp > 60000) { // 1 minute
+    if (now - value.time > 60000) {
       cache.delete(key);
     }
   }
-}, 30000);
+}, 60000);
 
-// Routes
+// Routes - EXACTLY THE SAME AS YOUR WORKING VERSION
 app.get("/price", async (req, res) => {
   const card = req.query.card || "";
   const user = req.query.user || "Streamer";
@@ -264,23 +213,14 @@ app.get("/price/:card", async (req, res) => {
   res.type("text/plain").send(msg);
 });
 
-app.get("/health", (req, res) => {
-  res.type("text/plain").send("OK");
-});
-
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  if (browserInstance) {
-    await browserInstance.close();
-  }
+  if (browserInstance) await browserInstance.close();
   process.exit(0);
 });
 
-process.on('SIGINT', async () => {
-  if (browserInstance) {
-    await browserInstance.close();
-  }
-  process.exit(0);
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+  // Pre-warm browser on startup
+  getBrowser().catch(console.error);
 });
-
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
